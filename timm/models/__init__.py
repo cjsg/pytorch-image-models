@@ -30,6 +30,7 @@ from .tresnet import *
 from .vgg import *
 from .vision_transformer import *
 from .vision_transformer_hybrid import *
+from .my_transformer import *
 from .vovnet import *
 from .xception import *
 from .xception_aligned import *
