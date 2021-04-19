@@ -98,7 +98,8 @@ parser.add_argument('--mean', type=float, nargs='+', default=None, metavar='MEAN
 parser.add_argument('--std', type=float, nargs='+', default=None, metavar='STD',
                     help='Override std deviation of of dataset')
 parser.add_argument('--interpolation', default='', type=str, metavar='NAME',
-                    help='Image resize interpolation type (overrides model)')
+                    help='Image resize interpolation type (for validation only; overrides model). '
+                    'For train, use train-interpolation')
 parser.add_argument('-b', '--batch-size', type=int, default=32, metavar='N',
                     help='input batch size for training (default: 32)')
 parser.add_argument('-vb', '--validation-batch-size-multiplier', type=int, default=1, metavar='N',
@@ -454,13 +455,17 @@ def main():
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
     # create the train and eval datasets
+    _logger.info('Creating datasets...')
+    start = datetime.now()
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir, split=args.train_split, is_training=True,
         batch_size=args.batch_size, repeats=args.epoch_repeats)
     dataset_eval = create_dataset(
         args.dataset, root=args.data_dir, split=args.val_split, is_training=False, batch_size=args.batch_size)
+    _logger.info(f'Done in {datetime.now()-start} seconds')
 
+    end = datetime.now()
     # setup mixup / cutmix
     collate_fn = None
     mixup_fn = None
