@@ -68,7 +68,7 @@ def transforms_imagenet_train(
     """
     scale = tuple(scale or (0.08, 1.0))  # default imagenet scale range
     ratio = tuple(ratio or (3./4., 4./3.))  # default imagenet ratio range
-    primary_tfl = [
+    primary_tfl = [  # "tfl" = transforms list
         RandomResizedCropAndInterpolation(img_size, scale=scale, ratio=ratio, interpolation=interpolation)]
     if hflip > 0.:
         primary_tfl += [transforms.RandomHorizontalFlip(p=hflip)]
