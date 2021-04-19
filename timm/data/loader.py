@@ -160,6 +160,7 @@ def create_loader(
     if re_split:
         # apply RE to second half of batch if no aug split otherwise line up with aug split
         re_num_splits = num_aug_splits or 2
+
     dataset.transform = create_transform(
         input_size,
         is_training=is_training,
