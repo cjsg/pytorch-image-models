@@ -251,6 +251,8 @@ parser.add_argument('--attack-name', choices=attacks, type=str, default='pgd', m
                     help=f'Attack name. Must be in {attacks}. (Default: pgd)')
 parser.add_argument('--attack-steps', type=int, default=10, metavar='STEP_NUM',
                     help='Number of steps to use for iterative attacks such as PGD. (default: 10)')
+parser.add_argument('--random-start', type=bool, default=None,
+                    help='If True, uses random starts for attacks. If None, uses attack defaults (Default: None)')
 
 # Misc
 parser.add_argument('--seed', type=int, default=42, metavar='S',
@@ -385,10 +387,14 @@ def main():
 
     if args.attack_size == 0.:
         normalize = True  # normalize data when loading it
+        fmodel = None
+        attack = None
     else:
         normalize = False  # normalization happens in first layer of net
         model = model_with_normalization(model, data_config['mean'], data_config['std'])
-        # TODO: continue here. Change data normalization to [0, 255]
+        bounds = (0, 255)
+        fmodel = fb.PyTorchModel(model, bounds=bounds)  # preprocessing done inside of net
+        attack = create_attack(args.attack_name, args.attack_steps, args.random_start)
 
     # setup augmentation batch splits for contrastive loss or split bn
     num_aug_splits = 0
@@ -489,15 +495,17 @@ def main():
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
     # create the train and eval datasets
-    _logger.info('Creating datasets...')
-    start = datetime.now()
+    if args.local_rank == 0:
+        _logger.info('Process 1 creates datasets...')
+        start = datetime.now()
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir, split=args.train_split, is_training=True,
         batch_size=args.batch_size, repeats=args.epoch_repeats)
     dataset_eval = create_dataset(
         args.dataset, root=args.data_dir, split=args.val_split, is_training=False, batch_size=args.batch_size)
-    _logger.info(f'Done in {datetime.now()-start} seconds')
+    if args.local_rank == 0:
+        _logger.info(f'Done in {datetime.now()-start} seconds')
 
     end = datetime.now()
     # setup mixup / cutmix
@@ -612,14 +620,16 @@ def main():
             train_metrics = train_one_epoch(
                 epoch, model, loader_train, optimizer, train_loss_fn, args,
                 lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
-                amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn)
+                amp_autocast=amp_autocast, loss_scaler=loss_scaler,
+                model_ema=model_ema, mixup_fn=mixup_fn, fmodel=fmodel, attack=attack)
 
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                 if args.local_rank == 0:
                     _logger.info("Distributing BatchNorm running means and vars")
                 distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
 
-            eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+            eval_metrics = validate(model, loader_eval, validate_loss_fn, args,
+                                    amp_autocast=amp_autocast, fmodel=fmodel, attack=attack)
 
             if model_ema is not None and not args.model_ema_force_cpu:
                 if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
@@ -651,7 +661,8 @@ def main():
 def train_one_epoch(
         epoch, model, loader, optimizer, loss_fn, args,
         lr_scheduler=None, saver=None, output_dir=None, amp_autocast=suppress,
-        loss_scaler=None, model_ema=None, mixup_fn=None):
+        loss_scaler=None, model_ema=None, mixup_fn=None, fmodel=None,
+        attack=None):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
         if args.prefetcher and loader.mixup_enabled:
@@ -680,6 +691,16 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
+            if args.attack_size > 0.:  # use robust training
+                model.eval()
+                if target.dim() > 1:
+                    raise ValueError(
+                        'Labels/targets must be 1D when using adversarial attacks. '
+                        'Are you using mixup or mixcut options?')
+                _, [adv_input], is_adv = attack(fmodel, input, target, epsilons=[args.attack_size])
+                optimizer.zero_grad()
+                input = adv_input.detach()  # .detach() actually not needed
+                model.train()
             output = model(input)
             loss = loss_fn(output, target)
 
@@ -756,7 +777,8 @@ def train_one_epoch(
     return OrderedDict([('loss', losses_m.avg)])
 
 
-def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
+def validate(model, loader, loss_fn, args, amp_autocast=suppress,
+             log_suffix='', fmodel=None, attack=None):
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
     top1_m = AverageMeter()
@@ -766,7 +788,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
 
     end = time.time()
     last_idx = len(loader) - 1
-    with torch.no_grad():
+    with torch.set_grad_enabled(args.attack_size > 0.):
         for batch_idx, (input, target) in enumerate(loader):
             last_batch = batch_idx == last_idx
             if not args.prefetcher:
@@ -776,44 +798,51 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 input = input.contiguous(memory_format=torch.channels_last)
 
             with amp_autocast():
-                output = model(input)
-            if isinstance(output, (tuple, list)):
-                output = output[0]
+                if args.attack_size > 0.:  # use robust training
+                    _, [adv_input], is_adv = attack(fmodel, input, target, epsilons=[args.attack_size])
+                    model.zero_grad()
+                    input = adv_input.detach()  # .detach() actually not needed
 
-            # augmentation reduction
-            reduce_factor = args.tta
-            if reduce_factor > 1:
-                output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
-                target = target[0:target.size(0):reduce_factor]
+            with torch.no_grad():
+                with amp_autocast():
+                    output = model(input)
+                if isinstance(output, (tuple, list)):
+                    output = output[0]
 
-            loss = loss_fn(output, target)
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+                # augmentation reduction
+                reduce_factor = args.tta
+                if reduce_factor > 1:
+                    output = output.unfold(0, reduce_factor, reduce_factor).mean(dim=2)
+                    target = target[0:target.size(0):reduce_factor]
 
-            if args.distributed:
-                reduced_loss = reduce_tensor(loss.data, args.world_size)
-                acc1 = reduce_tensor(acc1, args.world_size)
-                acc5 = reduce_tensor(acc5, args.world_size)
-            else:
-                reduced_loss = loss.data
+                loss = loss_fn(output, target)
+                acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
-            torch.cuda.synchronize()
+                if args.distributed:
+                    reduced_loss = reduce_tensor(loss.data, args.world_size)
+                    acc1 = reduce_tensor(acc1, args.world_size)
+                    acc5 = reduce_tensor(acc5, args.world_size)
+                else:
+                    reduced_loss = loss.data
 
-            losses_m.update(reduced_loss.item(), input.size(0))
-            top1_m.update(acc1.item(), output.size(0))
-            top5_m.update(acc5.item(), output.size(0))
+                torch.cuda.synchronize()
 
-            batch_time_m.update(time.time() - end)
-            end = time.time()
-            if args.local_rank == 0 and (last_batch or batch_idx % args.log_interval == 0):
-                log_name = 'Test' + log_suffix
-                _logger.info(
-                    '{0}: [{1:>4d}/{2}]  '
-                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  '
-                    'Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  '
-                    'Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  '
-                    'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
-                        log_name, batch_idx, last_idx, batch_time=batch_time_m,
-                        loss=losses_m, top1=top1_m, top5=top5_m))
+                losses_m.update(reduced_loss.item(), input.size(0))
+                top1_m.update(acc1.item(), output.size(0))
+                top5_m.update(acc5.item(), output.size(0))
+
+                batch_time_m.update(time.time() - end)
+                end = time.time()
+                if args.local_rank == 0 and (last_batch or batch_idx % args.log_interval == 0):
+                    log_name = 'Test' + log_suffix
+                    _logger.info(
+                        '{0}: [{1:>4d}/{2}]  '
+                        'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  '
+                        'Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  '
+                        'Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  '
+                        'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
+                            log_name, batch_idx, last_idx, batch_time=batch_time_m,
+                            loss=losses_m, top1=top1_m, top5=top5_m))
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
 
