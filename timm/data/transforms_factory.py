@@ -20,6 +20,7 @@ def transforms_noaug_train(
         use_prefetcher=False,
         mean=IMAGENET_DEFAULT_MEAN,
         std=IMAGENET_DEFAULT_STD,
+        normalize=True,
 ):
     if interpolation == 'random':
         # random interpolation not supported with no-aug
@@ -32,12 +33,13 @@ def transforms_noaug_train(
         # prefetcher and collate will handle tensor conversion and norm
         tfl += [ToNumpy()]
     else:
-        tfl += [
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=torch.tensor(mean),
-                std=torch.tensor(std))
-        ]
+        tfl += [transforms.ToTensor()]
+        if normalize:
+            tfl += [
+                transforms.Normalize(
+                         mean=torch.tensor(mean),
+                         std=torch.tensor(std))
+            ]
     return transforms.Compose(tfl)
 
 
@@ -58,6 +60,7 @@ def transforms_imagenet_train(
         re_count=1,
         re_num_splits=0,
         separate=False,
+        normalize=True,
 ):
     """
     If separate==True, the transforms are returned as a tuple of 3 separate transforms
@@ -111,12 +114,13 @@ def transforms_imagenet_train(
         # prefetcher and collate will handle tensor conversion and norm
         final_tfl += [ToNumpy()]
     else:
-        final_tfl += [
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=torch.tensor(mean),
-                std=torch.tensor(std))
-        ]
+        final_tfl += [transforms.ToTensor()]
+        if normalize:
+            final_tfl += [
+                transforms.Normalize(
+                         mean=torch.tensor(mean),
+                         std=torch.tensor(std))
+            ]
         if re_prob > 0.:
             final_tfl.append(
                 RandomErasing(re_prob, mode=re_mode, max_count=re_count, num_splits=re_num_splits, device='cpu'))
@@ -133,7 +137,8 @@ def transforms_imagenet_eval(
         interpolation='bilinear',
         use_prefetcher=False,
         mean=IMAGENET_DEFAULT_MEAN,
-        std=IMAGENET_DEFAULT_STD):
+        std=IMAGENET_DEFAULT_STD,
+        normalize=True):
     crop_pct = crop_pct or DEFAULT_CROP_PCT
 
     if isinstance(img_size, (tuple, list)):
@@ -154,12 +159,13 @@ def transforms_imagenet_eval(
         # prefetcher and collate will handle tensor conversion and norm
         tfl += [ToNumpy()]
     else:
-        tfl += [
-            transforms.ToTensor(),
-            transforms.Normalize(
-                     mean=torch.tensor(mean),
-                     std=torch.tensor(std))
-        ]
+        tfl += [transforms.ToTensor()]
+        if normalize:
+            tfl += [
+                transforms.Normalize(
+                         mean=torch.tensor(mean),
+                         std=torch.tensor(std))
+            ]
 
     return transforms.Compose(tfl)
 
@@ -184,7 +190,8 @@ def create_transform(
         re_num_splits=0,
         crop_pct=None,
         tf_preprocessing=False,
-        separate=False):
+        separate=False,
+        normalize=True):
 
     if isinstance(input_size, (tuple, list)):
         img_size = input_size[-2:]
@@ -204,7 +211,8 @@ def create_transform(
                 interpolation=interpolation,
                 use_prefetcher=use_prefetcher,
                 mean=mean,
-                std=std)
+                std=std,
+                normalize=normalize)
         elif is_training:
             transform = transforms_imagenet_train(
                 img_size,
@@ -222,7 +230,8 @@ def create_transform(
                 re_mode=re_mode,
                 re_count=re_count,
                 re_num_splits=re_num_splits,
-                separate=separate)
+                separate=separate,
+                normalize=normalize)
         else:
             assert not separate, "Separate transforms not supported for validation preprocessing"
             transform = transforms_imagenet_eval(
@@ -231,6 +240,7 @@ def create_transform(
                 use_prefetcher=use_prefetcher,
                 mean=mean,
                 std=std,
-                crop_pct=crop_pct)
+                crop_pct=crop_pct,
+                normalize=normalize)
 
     return transform

@@ -61,14 +61,17 @@ class PrefetchLoader:
                  re_prob=0.,
                  re_mode='const',
                  re_count=1,
-                 re_num_splits=0):
+                 re_num_splits=0,
+                 normalize=True):
         self.loader = loader
-        self.mean = torch.tensor([x * 255 for x in mean]).cuda().view(1, 3, 1, 1)
-        self.std = torch.tensor([x * 255 for x in std]).cuda().view(1, 3, 1, 1)
         self.fp16 = fp16
-        if fp16:
-            self.mean = self.mean.half()
-            self.std = self.std.half()
+        self.normalize = normalize
+        if self.normalize:
+            self.mean = torch.tensor([x * 255 for x in mean]).cuda().view(1, 3, 1, 1)
+            self.std = torch.tensor([x * 255 for x in std]).cuda().view(1, 3, 1, 1)
+            if fp16:
+                self.mean = self.mean.half()
+                self.std = self.std.half()
         if re_prob > 0.:
             self.random_erasing = RandomErasing(
                 probability=re_prob, mode=re_mode, max_count=re_count, num_splits=re_num_splits)
@@ -83,10 +86,9 @@ class PrefetchLoader:
             with torch.cuda.stream(stream):
                 next_input = next_input.cuda(non_blocking=True)
                 next_target = next_target.cuda(non_blocking=True)
-                if self.fp16:
-                    next_input = next_input.half().sub_(self.mean).div_(self.std)
-                else:
-                    next_input = next_input.float().sub_(self.mean).div_(self.std)
+                next_input = next_input.half() if self.fp16 else next_input.float()
+                if self.normalize:
+                    next_input = next_input.sub_(self.mean).div_(self.std)
                 if self.random_erasing is not None:
                     next_input = self.random_erasing(next_input)
 
@@ -155,6 +157,7 @@ def create_loader(
         tf_preprocessing=False,
         use_multi_epochs_loader=False,
         persistent_workers=True,
+        normalize=True,
 ):
     re_num_splits = 0
     if re_split:
@@ -182,6 +185,7 @@ def create_loader(
         re_count=re_count,
         re_num_splits=re_num_splits,
         separate=num_aug_splits > 0,
+        normalize=normalize,
     )
 
     sampler = None
@@ -225,7 +229,8 @@ def create_loader(
             re_prob=prefetch_re_prob,
             re_mode=re_mode,
             re_count=re_count,
-            re_num_splits=re_num_splits
+            re_num_splits=re_num_splits,
+            normalize=normalize
         )
 
     return loader

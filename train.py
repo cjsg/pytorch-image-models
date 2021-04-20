@@ -28,6 +28,8 @@ import torch.nn as nn
 import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
+import foolbox as fb
+
 from timm.data import create_dataset, create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
 from timm.models import create_model, safe_model_name, resume_checkpoint, load_checkpoint,\
     convert_splitbn_model, model_parameters
@@ -36,6 +38,7 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCro
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
+from timm.attacks import create_attack, model_with_normalization
 
 try:
     from apex import amp
@@ -240,6 +243,15 @@ parser.add_argument('--model-ema-force-cpu', action='store_true', default=False,
 parser.add_argument('--model-ema-decay', type=float, default=0.9998,
                     help='decay factor for model weights moving average (default: 0.9998)')
 
+# Adversarial attacks and robust training
+attacks = ['pgd', 'linfpgd', 'l2pgd', 'fgsm', 'fgm']
+parser.add_argument('--attack-size', type=float, default=0., metavar='EPS',
+                    help='Attack size epsilon. Active if > 0. (Default: 0.)')
+parser.add_argument('--attack-name', choices=attacks, type=str, default='pgd', metavar='NAME',
+                    help=f'Attack name. Must be in {attacks}. (Default: pgd)')
+parser.add_argument('--attack-steps', type=int, default=10, metavar='STEP_NUM',
+                    help='Number of steps to use for iterative attacks such as PGD. (default: 10)')
+
 # Misc
 parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
@@ -370,6 +382,13 @@ def main():
             f'Model {safe_model_name(args.model)} created, param count:{sum([m.numel() for m in model.parameters()])}')
 
     data_config = resolve_data_config(vars(args), model=model, verbose=args.local_rank == 0)
+
+    if args.attack_size == 0.:
+        normalize = True  # normalize data when loading it
+    else:
+        normalize = False  # normalization happens in first layer of net
+        model = model_with_normalization(model, data_config['mean'], data_config['std'])
+        # TODO: continue here. Change data normalization to [0, 255]
 
     # setup augmentation batch splits for contrastive loss or split bn
     num_aug_splits = 0
@@ -529,7 +548,8 @@ def main():
         distributed=args.distributed,
         collate_fn=collate_fn,
         pin_memory=args.pin_mem,
-        use_multi_epochs_loader=args.use_multi_epochs_loader
+        use_multi_epochs_loader=args.use_multi_epochs_loader,
+        normalize=normalize,
     )
 
     loader_eval = create_loader(
@@ -545,6 +565,7 @@ def main():
         distributed=args.distributed,
         crop_pct=data_config['crop_pct'],
         pin_memory=args.pin_mem,
+        normalize=normalize,
     )
 
     # setup loss function
