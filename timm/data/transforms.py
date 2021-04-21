@@ -30,29 +30,39 @@ class ToTensor:
         return torch.from_numpy(np_img).to(dtype=self.dtype)
 
 
+try:  # torchvision version >= 9.1
+    InterpolationPkg = F.InterpolationMode
+    interpolation_pkg_name = 'torchvision.InterpolationMode'
+
+except AttributeError:  # torchvision version < 9.1
+    InterpolationPkg = Image
+    interpolation_pkg_name = 'PIL.Image'
+
 _pil_interpolation_to_str = {
-    Image.NEAREST: 'PIL.Image.NEAREST',
-    Image.BILINEAR: 'PIL.Image.BILINEAR',
-    Image.BICUBIC: 'PIL.Image.BICUBIC',
-    Image.LANCZOS: 'PIL.Image.LANCZOS',
-    Image.HAMMING: 'PIL.Image.HAMMING',
-    Image.BOX: 'PIL.Image.BOX',
+    InterpolationPkg.NEAREST: f'{interpolation_pkg_name}.NEAREST',
+    InterpolationPkg.BILINEAR: f'{interpolation_pkg_name}.BILINEAR',
+    InterpolationPkg.BICUBIC: f'{interpolation_pkg_name}.BICUBIC',
+    InterpolationPkg.LANCZOS: f'{interpolation_pkg_name}.LANCZOS',
+    InterpolationPkg.HAMMING: f'{interpolation_pkg_name}.HAMMING',
+    InterpolationPkg.BOX: f'{interpolation_pkg_name}.BOX',
 }
 
 
 def _pil_interp(method):
     if method == 'bicubic':
-        return Image.BICUBIC
+        return InterpolationPkg.BICUBIC
     elif method == 'lanczos':
-        return Image.LANCZOS
+        return InterpolationPkg.LANCZOS
     elif method == 'hamming':
-        return Image.HAMMING
+        return InterpolationPkg.HAMMING
+    elif method == 'nearest':
+        return InterpolationPkg.NEAREST
     else:
-        # default bilinear, do we want to allow nearest?
-        return Image.BILINEAR
+        # default bilinear
+        return InterpolationPkg.BILINEAR
 
 
-_RANDOM_INTERPOLATION = (Image.BILINEAR, Image.BICUBIC)
+_RANDOM_INTERPOLATION = (InterpolationPkg.BILINEAR, InterpolationPkg.BICUBIC)
 
 
 class RandomResizedCropAndInterpolation:
