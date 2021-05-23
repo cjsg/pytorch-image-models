@@ -27,6 +27,10 @@ def create_dataset(name, root, split='validation', search_split=True, is_trainin
     # elif name == 'imgnet':  # CJ's hack to accelearate loading
     #     folder = '/train' if is_training else '/val'
     #     ds = torchvision.datasets.ImageFolder(root + folder)
+    # elif name == 'lmdb-imagenet':
+    #     if search_split and os.path.isdir(root):
+    #         root = _search_split(root, split)
+    #     ds = 
     else:
         # FIXME support more advance split cfg for ImageFolder/Tar datasets in the future
         kwargs.pop('repeats', 0)  # FIXME currently only Iterable dataset support the repeat multiplier

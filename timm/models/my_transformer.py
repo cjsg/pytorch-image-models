@@ -149,9 +149,9 @@ def ViT_L2_H4_P4(dropout_rate=0., **kwargs):
         l=2, D=4*4*3, h=4, n=8*8, d=4*4*3, p=4, c=3, k=10, dropout_rate=dropout_rate)
 
 @register_model
-def ViT_L8_H4_P4(dropout_rate=0., **kwargs):
+def ViT_L8_H4_P4(dropout_rate=0.1, **kwargs):
     return ViT(
-        l=8, D=4*4*3, h=4, n=8*8, d=4*4*3, p=4, c=3, k=10, dropout_rate=dropout_rate)
+        l=8, D=4*4*3*4, h=4, n=8*8, d=4*4*3, p=4, c=3, k=10, dropout_rate=dropout_rate)
 
 
 def test():
