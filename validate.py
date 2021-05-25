@@ -72,13 +72,13 @@ parser.add_argument('--class-map', default='', type=str, metavar='FILENAME',
                     help='path to class to idx mapping file (default: "")')
 parser.add_argument('--gp', default=None, type=str, metavar='POOL',
                     help='Global pool type, one of (fast, avg, max, avgmax, avgmaxc). Model default if None.')
-parser.add_argument('--log-freq', default=10, type=int,
+parser.add_argument('--log-interval', default=10, type=int,
                     metavar='N', help='batch logging frequency (default: 10)')
 parser.add_argument('--checkpoint', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
-parser.add_argument('--num-gpu', type=int, default=1,
+parser.add_argument('--num-gpu', type=int, default=None,
                     help='Number of GPUS to use')
 parser.add_argument('--no-test-pool', dest='no_test_pool', action='store_true',
                     help='disable test time pool')
@@ -113,8 +113,13 @@ parser.add_argument('--valid-labels', default='', type=str, metavar='FILENAME',
 def validate(args):
     # might as well try to validate something
     args.pretrained = args.pretrained or not args.checkpoint
+    if args.device == 'cpu' and not args.no_prefetcher:
+        args.no_prefetcher = True
+        _logger.warning("Pre-fetcher needs GPUs. I will switch on the argument --no-prefetcher.")
     args.prefetcher = not args.no_prefetcher
     amp_autocast = suppress  # do nothing
+    if args.amp or args.apex_amp or args.native_amp:
+        assert args.device == 'cuda', 'You need GPUs when enabling --amp'
     if args.amp:
         if has_native_amp:
             args.native_amp = True
@@ -161,7 +166,7 @@ def validate(args):
         torch.jit.optimized_execution(True)
         model = torch.jit.script(model)
 
-    model = model.cuda()
+    model = model.to(args.device)
     if args.apex_amp:
         model = amp.initialize(model, opt_level='O1')
 
@@ -171,7 +176,7 @@ def validate(args):
     if args.num_gpu > 1:
         model = torch.nn.DataParallel(model, device_ids=list(range(args.num_gpu)))
 
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = nn.CrossEntropyLoss().to(args.device)
 
     dataset = create_dataset(
         root=args.data, name=args.dataset, split=args.split,
@@ -211,15 +216,15 @@ def validate(args):
     model.eval()
     with torch.no_grad():
         # warmup, reduce variability of first batch time, especially for comparing torchscript vs non
-        input = torch.randn((args.batch_size,) + tuple(data_config['input_size'])).cuda()
+        input = torch.randn((args.batch_size,) + tuple(data_config['input_size'])).to(args.device)
         if args.channels_last:
             input = input.contiguous(memory_format=torch.channels_last)
         model(input)
         end = time.time()
         for batch_idx, (input, target) in enumerate(loader):
             if args.no_prefetcher:
-                target = target.cuda()
-                input = input.cuda()
+                target = target.to(args.device)
+                input = input.to(args.device)
             if args.channels_last:
                 input = input.contiguous(memory_format=torch.channels_last)
 
@@ -244,7 +249,7 @@ def validate(args):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if batch_idx % args.log_freq == 0:
+            if batch_idx % args.log_interval == 0:
                 _logger.info(
                     'Test: [{0:>4d}/{1}]  '
                     'Time: {batch_time.val:.3f}s ({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
@@ -295,6 +300,17 @@ def main():
             # model name doesn't exist, try as wildcard filter
             model_names = list_models(args.model)
             model_cfgs = [(n, '') for n in model_names]
+
+    if torch.cuda.is_available():
+        args.device = 'cuda'
+        if args.num_gpu is None:
+            args.num_gpu = 1
+    else:
+        args.device = 'cpu'
+        if args.num_gpu is None:
+            args.num_gpu = 0
+        assert args.num_gpu == 0, '--num-gpu != 0, but no GPU was found'
+
 
     if len(model_cfgs):
         results_file = args.results_file or './results-all.csv'
