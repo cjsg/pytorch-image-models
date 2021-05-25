@@ -2,6 +2,7 @@ import os
 import torchvision
 
 from .dataset import IterableImageDataset, ImageDataset
+from lmdbdataset import LMDBIterDataset, BufferedDataset, BufferedDataLoader
 
 
 def _search_split(root, split):
@@ -27,6 +28,11 @@ def create_dataset(name, root, split='validation', search_split=True, is_trainin
     # elif name == 'imgnet':  # CJ's hack to accelearate loading
     #     folder = '/train' if is_training else '/val'
     #     ds = torchvision.datasets.ImageFolder(root + folder)
+    elif name.startswith('lmdb') or 'lmdb' in root:
+        kwargs.pop('repeats', 0)  # FIXME currently only Iterable dataset support the repeat multiplier
+        split_name = 'train' if (split == 'train') else 'val'
+        ds = LMDBIterDataset(
+            root, split_name, img_type='jpeg', return_type='torch', **kwargs)
     else:
         # FIXME support more advance split cfg for ImageFolder/Tar datasets in the future
         kwargs.pop('repeats', 0)  # FIXME currently only Iterable dataset support the repeat multiplier

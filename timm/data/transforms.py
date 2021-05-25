@@ -9,11 +9,17 @@ import numpy as np
 
 class ToNumpy:
 
-    def __call__(self, pil_img):
-        np_img = np.array(pil_img, dtype=np.uint8)
-        if np_img.ndim < 3:
-            np_img = np.expand_dims(np_img, axis=-1)
-        np_img = np.rollaxis(np_img, 2)  # HWC to CHW
+    def __call__(self, img):
+        if type(img) == Image.Image:
+            np_img = np.array(img, dtype=np.uint8)
+            if np_img.ndim < 3:
+                np_img = np.expand_dims(np_img, axis=-1)
+            np_img = np.rollaxis(np_img, 2)  # HWC to CHW
+        elif type(img) == np.ndarray:
+            np_img = img
+        else:
+            raise ValueError(f"img must be of type PIL.Image.Image or "
+                             "np.ndarray. Provided {type(img)}.")
         return np_img
 
 
@@ -22,12 +28,15 @@ class ToTensor:
     def __init__(self, dtype=torch.float32):
         self.dtype = dtype
 
-    def __call__(self, pil_img):
-        np_img = np.array(pil_img, dtype=np.uint8)
-        if np_img.ndim < 3:
-            np_img = np.expand_dims(np_img, axis=-1)
-        np_img = np.rollaxis(np_img, 2)  # HWC to CHW
-        return torch.from_numpy(np_img).to(dtype=self.dtype)
+    def __call__(self, img):
+        if type(img) == Image.Image:
+            img = np.array(img, dtype=np.uint8)
+        if type(img) == np.ndarray:
+            if img.ndim < 3:
+                img = np.expand_dims(img, axis=-1)
+            img = np.rollaxis(img, 2)  # HWC to CHW
+            img = torch.from_numpy(img)
+        return img.to(dtype=self.dtype)
 
 
 try:  # torchvision version >= 9.1
@@ -109,7 +118,10 @@ class RandomResizedCropAndInterpolation:
             tuple: params (i, j, h, w) to be passed to ``crop`` for a random
                 sized crop.
         """
-        area = img.size[0] * img.size[1]
+        h_img = img.size(0) if type(img) == torch.Tensor else img.size[0]
+        w_img = img.size(1) if type(img) == torch.Tensor else img.size[1]
+
+        area = h_img * w_img
 
         for attempt in range(10):
             target_area = random.uniform(*scale) * area
@@ -119,24 +131,24 @@ class RandomResizedCropAndInterpolation:
             w = int(round(math.sqrt(target_area * aspect_ratio)))
             h = int(round(math.sqrt(target_area / aspect_ratio)))
 
-            if w <= img.size[0] and h <= img.size[1]:
-                i = random.randint(0, img.size[1] - h)
-                j = random.randint(0, img.size[0] - w)
+            if w <= h_img and h <= w_img:
+                i = random.randint(0, w_img - h)
+                j = random.randint(0, h_img - w)
                 return i, j, h, w
 
         # Fallback to central crop
-        in_ratio = img.size[0] / img.size[1]
+        in_ratio = h_img / w_img
         if in_ratio < min(ratio):
-            w = img.size[0]
+            w = h_img
             h = int(round(w / min(ratio)))
         elif in_ratio > max(ratio):
-            h = img.size[1]
+            h = w_img
             w = int(round(h * max(ratio)))
         else:  # whole image
-            w = img.size[0]
-            h = img.size[1]
-        i = (img.size[1] - h) // 2
-        j = (img.size[0] - w) // 2
+            w = h_img
+            h = w_img
+        i = (w_img - h) // 2
+        j = (h_img - w) // 2
         return i, j, h, w
 
     def __call__(self, img):

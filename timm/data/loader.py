@@ -155,6 +155,7 @@ def create_loader(
         tf_preprocessing=False,
         use_multi_epochs_loader=False,
         persistent_workers=True,
+        buffer_size=None,
 ):
     re_num_splits = 0
     if re_split:
@@ -196,11 +197,6 @@ def create_loader(
     if collate_fn is None:
         collate_fn = fast_collate if use_prefetcher else torch.utils.data.dataloader.default_collate
 
-    loader_class = torch.utils.data.DataLoader
-
-    if use_multi_epochs_loader:
-        loader_class = MultiEpochsDataLoader
-
     loader_args = dict(
         batch_size=batch_size,
         shuffle=not isinstance(dataset, torch.utils.data.IterableDataset) and sampler is None and is_training,
@@ -210,6 +206,17 @@ def create_loader(
         pin_memory=pin_memory,
         drop_last=is_training,
         persistent_workers=persistent_workers)
+
+    if buffer_size is not None: 
+        loader_class = BufferedDataLoader
+        loader_args['buffer_size'] = buffer_size
+        assert type(dataset) == 'LMDBIterDataset', "buffer_size is not None, but buffer only implemented for LMDBIterDataset."
+        assert not use_multi_epochs_loader, "multi epochs loader not possible with lmdb dataset"
+    elif use_multi_epochs_loader:
+        loader_class = MultiEpochsDataLoader
+    else:
+        loader_class = torch.utils.data.DataLoader
+
     try:
         loader = loader_class(dataset, **loader_args)
     except TypeError as e:

@@ -33,7 +33,7 @@ def transforms_noaug_train(
         tfl += [ToNumpy()]
     else:
         tfl += [
-            transforms.ToTensor(),
+            ToTensor(),
             transforms.Normalize(
                 mean=torch.tensor(mean),
                 std=torch.tensor(std))
@@ -112,7 +112,7 @@ def transforms_imagenet_train(
         final_tfl += [ToNumpy()]
     else:
         final_tfl += [
-            transforms.ToTensor(),
+            ToTensor(),
             transforms.Normalize(
                 mean=torch.tensor(mean),
                 std=torch.tensor(std))
@@ -155,7 +155,7 @@ def transforms_imagenet_eval(
         tfl += [ToNumpy()]
     else:
         tfl += [
-            transforms.ToTensor(),
+            ToTensor(),
             transforms.Normalize(
                      mean=torch.tensor(mean),
                      std=torch.tensor(std))
