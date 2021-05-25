@@ -314,10 +314,16 @@ def main():
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
         args.distributed = int(os.environ['WORLD_SIZE']) > 1
-    args.device = 'cuda:0'
+    if torch.cuda.is_available():
+        current_device = 'cuda'
+        args.device = 'cuda:0'
+    else:
+        current_device = 'cpu'
+        args.device = 'cpu'
     args.world_size = 1
     args.rank = 0  # global rank
-    if args.distributed:
+    if args.distributed:  # use distributed only on gpu
+        assert torch.cuda.is_available()
         args.device = 'cuda:%d' % args.local_rank
         torch.cuda.set_device(args.local_rank)
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
@@ -325,6 +331,11 @@ def main():
         args.rank = torch.distributed.get_rank()
         _logger.info('Training in distributed mode with multiple processes, 1 GPU per process. Process %d, total %d.'
                      % (args.rank, args.world_size))
+    elif args.device == 'cpu':
+        _logger.info('No GPU found. Training on CPU.')
+        if args.prefetcher:
+            args.prefetcher = False
+            _logger.warning("Pre-fetcher needs GPUs, but none were detected. I will switch on the argument --no-prefetcher.")
     else:
         _logger.info('Training with a single process on 1 GPUs.')
     assert args.rank >= 0
@@ -382,8 +393,8 @@ def main():
         assert num_aug_splits > 1 or args.resplit
         model = convert_splitbn_model(model, max(num_aug_splits, 2))
 
-    # move model to GPU, enable channels last layout if set
-    model.cuda()
+    # move model to GPU (if available), enable channels last layout if set
+    model.to(current_device)
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
 
@@ -550,15 +561,15 @@ def main():
     # setup loss function
     if args.jsd:
         assert num_aug_splits > 1  # JSD only valid with aug splits set
-        train_loss_fn = JsdCrossEntropy(num_splits=num_aug_splits, smoothing=args.smoothing).cuda()
+        train_loss_fn = JsdCrossEntropy(num_splits=num_aug_splits, smoothing=args.smoothing).to(current_device)
     elif mixup_active:
         # smoothing is handled with mixup target transform
-        train_loss_fn = SoftTargetCrossEntropy().cuda()
+        train_loss_fn = SoftTargetCrossEntropy().to(current_device)
     elif args.smoothing:
-        train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.smoothing).cuda()
+        train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(current_device)
     else:
-        train_loss_fn = nn.CrossEntropyLoss().cuda()
-    validate_loss_fn = nn.CrossEntropyLoss().cuda()
+        train_loss_fn = nn.CrossEntropyLoss().to(current_device)
+    validate_loss_fn = nn.CrossEntropyLoss().to(current_device)
 
     # setup checkpoint saver and eval metric tracking
     eval_metric = args.eval_metric
@@ -637,6 +648,8 @@ def train_one_epoch(
             loader.mixup_enabled = False
         elif mixup_fn is not None:
             mixup_fn.mixup_enabled = False
+    
+    current_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
     batch_time_m = AverageMeter()
@@ -652,7 +665,7 @@ def train_one_epoch(
         last_batch = batch_idx == last_idx
         data_time_m.update(time.time() - end)
         if not args.prefetcher:
-            input, target = input.cuda(), target.cuda()
+            input, target = input.to(current_device), target.to(current_device)
             if mixup_fn is not None:
                 input, target = mixup_fn(input, target)
         if args.channels_last:
@@ -683,7 +696,8 @@ def train_one_epoch(
         if model_ema is not None:
             model_ema.update(model)
 
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         num_updates += 1
         batch_time_m.update(time.time() - end)
         if last_batch or batch_idx % args.log_interval == 0:
@@ -736,6 +750,7 @@ def train_one_epoch(
 
 
 def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix=''):
+    current_device = 'cuda' if torch.cuda.is_available() else 'cpu'
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
     top1_m = AverageMeter()
@@ -749,8 +764,8 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
         for batch_idx, (input, target) in enumerate(loader):
             last_batch = batch_idx == last_idx
             if not args.prefetcher:
-                input = input.cuda()
-                target = target.cuda()
+                input = input.to(current_device)
+                target = target.to(current_device)
             if args.channels_last:
                 input = input.contiguous(memory_format=torch.channels_last)
 
@@ -775,7 +790,8 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
             else:
                 reduced_loss = loss.data
 
-            torch.cuda.synchronize()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
 
             losses_m.update(reduced_loss.item(), input.size(0))
             top1_m.update(acc1.item(), output.size(0))
