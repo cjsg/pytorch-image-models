@@ -343,6 +343,7 @@ def main():
     # resolve AMP arguments based on PyTorch / Apex availability
     use_amp = None
     if args.amp:
+        assert torch.cuda.is_available(), 'You need GPUs when enabling --amp'
         # `--amp` chooses native amp before apex (APEX ver not actively maintained)
         if has_native_amp:
             args.native_amp = True
