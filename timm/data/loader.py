@@ -195,8 +195,6 @@ def create_loader(
             # of samples per-process, will slightly alter validation results
             sampler = OrderedDistributedSampler(dataset)
 
-    print('sampler', sampler)
-
     if collate_fn is None:
         collate_fn = fast_collate if use_prefetcher else torch.utils.data.dataloader.default_collate
 
