@@ -18,7 +18,7 @@ def _search_split(root, split):
     return root
 
 
-def create_dataset(name, root, split='validation', search_split=True, is_training=False, batch_size=None, **kwargs):
+def create_dataset(name, root, split='validation', search_split=True, is_training=False, batch_size=None, distributed=False, **kwargs):
     name = name.lower()
     if name.startswith('tfds'):
         ds = IterableImageDataset(
@@ -32,7 +32,8 @@ def create_dataset(name, root, split='validation', search_split=True, is_trainin
         kwargs.pop('repeats', 0)  # FIXME currently only Iterable dataset support the repeat multiplier
         split_name = 'train' if (split == 'train') else 'val'
         ds = LMDBIterDataset(
-            root, split_name, img_type='jpeg', return_type='torch', **kwargs)
+            root, split_name, img_type='jpeg', return_type='torch',
+            distributed=distributed, **kwargs)
     else:
         # FIXME support more advance split cfg for ImageFolder/Tar datasets in the future
         kwargs.pop('repeats', 0)  # FIXME currently only Iterable dataset support the repeat multiplier

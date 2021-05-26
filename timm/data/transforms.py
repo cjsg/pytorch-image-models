@@ -19,7 +19,7 @@ class ToNumpy:
             np_img = img
         else:
             raise ValueError(f"img must be of type PIL.Image.Image or "
-                             "np.ndarray. Provided {type(img)}.")
+                             f"np.ndarray. Provided {type(img)}.")
         return np_img
 
 

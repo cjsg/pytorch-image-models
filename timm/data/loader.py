@@ -8,6 +8,7 @@ Hacked together by / Copyright 2020 Ross Wightman
 
 import torch.utils.data
 import numpy as np
+from lmdbdataset import BufferedDataLoader, LMDBIterDataset
 
 from .transforms_factory import create_transform
 from .constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
@@ -194,6 +195,8 @@ def create_loader(
             # of samples per-process, will slightly alter validation results
             sampler = OrderedDistributedSampler(dataset)
 
+    print('sampler', sampler)
+
     if collate_fn is None:
         collate_fn = fast_collate if use_prefetcher else torch.utils.data.dataloader.default_collate
 
@@ -209,8 +212,11 @@ def create_loader(
 
     if buffer_size is not None: 
         loader_class = BufferedDataLoader
+        loader_args.pop('shuffle')
         loader_args['buffer_size'] = buffer_size
-        assert type(dataset) == 'LMDBIterDataset', "buffer_size is not None, but buffer only implemented for LMDBIterDataset."
+        assert type(dataset) == LMDBIterDataset, (
+            f"buffer_size is not None, but buffer only implemented for "
+            f"LMDBIterDataset, but provided dataset of type {type(dataset)}")
         assert not use_multi_epochs_loader, "multi epochs loader not possible with lmdb dataset"
     elif use_multi_epochs_loader:
         loader_class = MultiEpochsDataLoader
