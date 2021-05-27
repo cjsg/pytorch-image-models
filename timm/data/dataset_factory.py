@@ -2,7 +2,7 @@ import os
 import torchvision
 
 from .dataset import IterableImageDataset, ImageDataset
-from lmdbdataset import LMDBIterDataset, BufferedDataset, BufferedDataLoader
+from lmdbdataset import LMDBIterDataset
 
 
 def _search_split(root, split):
