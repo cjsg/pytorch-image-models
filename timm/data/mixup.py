@@ -117,6 +117,7 @@ class Mixup:
         self.mode = mode
         self.correct_lam = correct_lam  # correct lambda based on clipped area for cutmix
         self.mixup_enabled = True  # set to false to disable mixing (intended tp be set by train loop)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def _params_per_elem(self, batch_size):
         lam = np.ones(batch_size, dtype=np.float32)
@@ -214,7 +215,8 @@ class Mixup:
             lam = self._mix_pair(x)
         else:
             lam = self._mix_batch(x)
-        target = mixup_target(target, self.num_classes, lam, self.label_smoothing)
+        target = mixup_target(target, self.num_classes, lam,
+                              self.label_smoothing, self.device)
         return x, target
 
 

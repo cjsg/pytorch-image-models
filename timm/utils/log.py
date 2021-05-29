@@ -4,6 +4,7 @@ Hacked together by / Copyright 2020 Ross Wightman
 """
 import logging
 import logging.handlers
+import sys
 
 
 class FormatterNoInfo(logging.Formatter):
@@ -17,7 +18,7 @@ class FormatterNoInfo(logging.Formatter):
 
 
 def setup_default_logging(default_level=logging.INFO, log_path=''):
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(FormatterNoInfo())
     logging.root.addHandler(console_handler)
     logging.root.setLevel(default_level)
