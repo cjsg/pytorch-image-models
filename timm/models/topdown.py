@@ -6,11 +6,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .registry import register_model
-from .layers import DropPath
+try:
+    from .registry import register_model
+    from .layers import DropPath
+except ImportError:
+    from registry import register_model
+    from layers import DropPath
+
 
 _logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO)
 
 '''
     b = batch_size
@@ -264,6 +269,9 @@ class MSAttention(nn.Module):
         self.ms_proj_drop = MSLayer([nn.Dropout(proj_drop) for proj_drop in proj_drops])
 
     def forward(self, ms_x):
+        device = ms_x[0].get_device()
+        if device < 0:
+            device = 'cpu'
         ms_slf_attn = MSTensor([])
 
         for i in range(self.num_scales):
@@ -286,7 +294,7 @@ class MSAttention(nn.Module):
                 attn.append(torch.einsum('bkhwlf,bkhwmf->bkhwlm', q_peer, k_peer) * qk_scaling_peer)
                 v_peer = ra(v_peer, 'b k (h1 h2) (w1 w2) f -> b k h1 w1 (h2 w2) f', h2=h_block, w2=h_block)
                 val.append(repeat(v_peer, 'b k h1 w1 h2w2 f -> b k h1 w1 r h2w2 f', r=h_block**2))
-                attn_weights.append(self.weight_peers * torch.ones(h_block**2))
+                attn_weights.append(self.weight_peers * torch.ones(h_block**2, device=device))
 
             # Attention to parents
             if self.attend_to_parents and i > 0:
@@ -298,7 +306,7 @@ class MSAttention(nn.Module):
                 attn.append(torch.einsum('bkhwlf,bkhwmf->bkhwlm', q_par, k_par) * qk_scaling_par)
                 v_par = ra(v_par, 'b k h1 w1 f -> b k h1 w1 1 f')
                 val.append(repeat(v_par, 'b k h1 w1 1 f -> b k h1 w1 r 1 f', r=h_block**2))
-                attn_weights.append(self.weight_parents * torch.ones(1))
+                attn_weights.append(self.weight_parents * torch.ones(1, device=device))
 
             # Attention to kids
             if i < (self.num_scales-1):
@@ -311,7 +319,7 @@ class MSAttention(nn.Module):
                 attn.append(ra(attn_kid, 'b k (h1 h2) (w1 w2) 1 g -> b k h1 w1 (h2 w2) g', h2=h_block, w2=h_block))
                 val.append(ra(v_kid, 'b k (h1 h2 h3) (w1 w2 w3) f -> b k h1 w1 (h2 w2) (h3 w3) f',
                              h2=h_block, h3=h_kids, w2=h_block, w3=h_kids))
-                attn_weights.append(self.weight_kids * torch.ones(h_kids**2))
+                attn_weights.append(self.weight_kids * torch.ones(h_kids**2, device=device))
 
             _logger.debug(f'shape of val peers/par/kids: {[v.shape for v in val]}')
             val = torch.cat(val, dim=-2)
@@ -375,7 +383,8 @@ class MSTransformer(nn.Module):
         self.ms_ln2 = MSLayer([nn.LayerNorm(dim, eps=1e-6) for dim in feature_dims])
         self.ms_mlp = MSLayer([MLP(dim, hidden_dim, drop=drop)
             for (dim, hidden_dim, drop) in zip(feature_dims, mlp_hidden_dims, mlp_drops)])
-        self.ms_drop_path = MSLayer([DropPath(drop) for drop in path_drops])
+        # self.ms_drop_path = MSLayer([DropPath(drop) for drop in path_drops])  # TODO: Solve NaN problem
+        self.ms_drop_path = MSLayer([nn.Identity() for drop in path_drops])
 
     def forward(self, ms_z):
         ms_out = ms_z[:self.num_scales]  # possibly ignore finest scales
@@ -455,7 +464,8 @@ class MultiScaleViT(nn.Module):
 def small_cifar_msvit(pretrained=False, attend_to_peers=True, attend_to_parents=True,
                       decouple_scales=False, wait_for_top=True, weight_parents=1., weight_peers=1.,
                       weight_kids=1., **kwargs):
-    drop=.1
+    dropout=kwargs.pop('drop', .1)
+    drop_path=kwargs.pop('drop_path', .1)
     return MultiScaleViT(
                 img_size=32,
                 num_classes=10,
@@ -473,11 +483,11 @@ def small_cifar_msvit(pretrained=False, attend_to_peers=True, attend_to_parents=
                 weight_peers=weight_peers,
                 weight_kids=weight_kids,
                 qkv_bias=False,
-                embed_drops=drop,
-                mlp_drops=drop,
-                attn_drops=drop,
-                proj_drops=drop,
-                path_drops=drop,
+                embed_drops=dropout,
+                mlp_drops=dropout,
+                attn_drops=dropout,
+                proj_drops=dropout,
+                path_drops=drop_path,
                 num_channels=3)
 
 
