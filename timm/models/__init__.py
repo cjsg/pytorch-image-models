@@ -33,6 +33,7 @@ from .senet import *
 from .sknet import *
 from .swin_transformer import *
 from .tnt import *
+from .topdown import *
 from .tresnet import *
 from .vgg import *
 from .vision_transformer import *
