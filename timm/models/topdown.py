@@ -1,5 +1,5 @@
 import logging
-from math import prod
+import math
 from einops import rearrange, repeat as ra, repeat
 
 import torch
@@ -150,7 +150,7 @@ def compute_scales_and_block_sizes(img_size, patch_size, words_per_block):
     _logger.debug(f'words_per_block: {words_per_block}')
     _logger.debug(f'num_patches: {num_patches}')
     assert num_scales == len(num_patches) == len(words_per_block)
-    assert prod(words_per_block) * patch_size == img_size, (
+    assert math.prod(words_per_block) * patch_size == img_size, (
         f'words_per_block={words_per_block} patch_size={patch_size} '
         f'img_size={img_size}')
 
@@ -230,6 +230,7 @@ class MSAttention(nn.Module):
         self.weight_parents = weight_parents
         self.weight_peers = weight_peers
         self.weight_kids = weight_kids
+        print('num scales = ', self.num_scales)
 
         if not attend_to_parents and weight_parents not in {0., 1.}:
             raise ValueError('Cannot specify a non-zero attention weight to parents when '
@@ -446,7 +447,8 @@ class MultiScaleViT(nn.Module):
                     self.words_per_block[:s], self.feature_dims[:s], self.num_heads,
                     self.mlp_hidden_dims[:s], self.attend_to_peers, self.attend_to_parents,
                     self.decouple_scales, self.qkv_bias, self.mlp_drops[:s], self.attn_drops[:s],
-                    self.proj_drops[:s], self.weight_parents, self.weight_peers, self.weight_kids))
+                    self.proj_drops[:s], self.path_drops[:s], self.weight_parents,
+                    self.weight_peers, self.weight_kids))
         self.transformers = nn.Sequential(*transformers)
 
         self.head = nn.Linear(self.feature_dims[0], self.num_classes, bias=True)
@@ -454,7 +456,6 @@ class MultiScaleViT(nn.Module):
     def forward(self, x):
         ms_z = self.embedding(x)
         ms_z = self.transformers(ms_z)
-        # out = ms_z[0].reshape(x.shape[0], -1)
         out = ms_z.get_scale(0).reshape(x.shape[0], -1)
         return self.head(out)
 
@@ -470,10 +471,10 @@ def small_cifar_msvit(pretrained=False, attend_to_peers=True, attend_to_parents=
                 img_size=32,
                 num_classes=10,
                 patch_size=1,
-                words_per_block = [1, 2, 4, 4],
+                words_per_block = [1, 32],  # 2, 4, 4],
                 feature_dims=192,
                 num_heads=3,
-                num_transformers=12,
+                num_transformers=1,
                 mlp_hidden_dims=4*192,
                 attend_to_peers=attend_to_peers,
                 attend_to_parents=attend_to_parents,
