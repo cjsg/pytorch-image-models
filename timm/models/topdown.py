@@ -1,5 +1,4 @@
 import logging
-import math
 from einops import rearrange, repeat as ra, repeat
 
 import torch
@@ -35,6 +34,11 @@ _logger = logging.getLogger(__name__)
 '''
 
 # Usual layers
+class DummyModule(nn.Module):
+    # only used as placeholder in ModuleLists
+    def forward(self, x):
+        raise NotImplementedError
+
 
 class AddLearnableConstants(nn.Module):
     # This class just adds a learnable constant. It is only here to avoid using nn.ParameterList in
@@ -150,7 +154,7 @@ def compute_scales_and_block_sizes(img_size, patch_size, words_per_block):
     _logger.debug(f'words_per_block: {words_per_block}')
     _logger.debug(f'num_patches: {num_patches}')
     assert num_scales == len(num_patches) == len(words_per_block)
-    assert math.prod(words_per_block) * patch_size == img_size, (
+    assert torch.tensor(words_per_block).prod().item() * patch_size == img_size, (
         f'words_per_block={words_per_block} patch_size={patch_size} '
         f'img_size={img_size}')
 
@@ -246,11 +250,13 @@ class MSAttention(nn.Module):
 
         if self.attend_to_parents:
             self.ms_q_par = nn.ModuleList(
-                [Query(dim_par, dim_peer, num_heads, qkv_bias)
+                [DummyModule()]
+                + [Query(dim_par, dim_peer, num_heads, qkv_bias)
                     for dim_par, dim_peer in zip(feature_dims[1:], feature_dims[:-1])])
-            self.ms_kv_par = nn.ModuleList([
-                KeyValue(dim_par, dim_peer, num_heads, qkv_bias)
-                    for dim_par, dim_peer in zip(feature_dims[:-1], feature_dims[1:])])
+            self.ms_kv_par = nn.ModuleList(
+                [KeyValue(dim_par, dim_peer, num_heads, qkv_bias)
+                    for dim_par, dim_peer in zip(feature_dims[:-1], feature_dims[1:])]
+                + [DummyModule()])
 
         if self.attend_to_peers:
             self.ms_q_peer = nn.ModuleList([
@@ -258,11 +264,13 @@ class MSAttention(nn.Module):
             self.ms_kv_peer = nn.ModuleList([
                 KeyValue(dim, dim, num_heads, qkv_bias) for dim in feature_dims])
 
-        self.ms_q_kid = nn.ModuleList([
-            Query(dim_kid, dim_peer, num_heads, qkv_bias)
-                for dim_kid, dim_peer in zip(feature_dims[:-1], feature_dims[1:])])
-        self.ms_kv_kid = nn.ModuleList([
-            KeyValue(dim_kid, dim_peer, num_heads, qkv_bias)
+        self.ms_q_kid = nn.ModuleList(
+            [Query(dim_kid, dim_peer, num_heads, qkv_bias)
+                for dim_kid, dim_peer in zip(feature_dims[:-1], feature_dims[1:])]
+            + [DummyModule()])
+        self.ms_kv_kid = nn.ModuleList(
+            [DummyModule()]
+            + [KeyValue(dim_kid, dim_peer, num_heads, qkv_bias)
                 for dim_kid, dim_peer in zip(feature_dims[1:], feature_dims[:-1])])
 
         self.attn_drops = [nn.Dropout(attn_drop) for attn_drop in attn_drops]
@@ -300,7 +308,7 @@ class MSAttention(nn.Module):
             # Attention to parents
             if self.attend_to_parents and i > 0:
                 qk_scaling_par = 1. if self.decouple_scales else qk_scaling
-                q_par = self.ms_q_par[i-1](ms_x.get_scale(i))  # query constructed from scale i
+                q_par = self.ms_q_par[i](ms_x.get_scale(i))  # query constructed from scale i
                 k_par, v_par = self.ms_kv_par[i-1](ms_x.get_scale(i-1))  # kv constructed from scale i-1
                 q_par = ra(q_par, 'b k (h1 h2) (w1 w2) f -> b k h1 w1 (h2 w2) f', h2=h_block, w2=h_block)
                 k_par = ra(k_par, 'b k h1 w1 f -> b k h1 w1 1 f')
@@ -313,7 +321,7 @@ class MSAttention(nn.Module):
             if i < (self.num_scales-1):
                 qk_scaling_kids = h_kids ** -0.5 if self.decouple_scales else qk_scaling
                 q_kid = self.ms_q_kid[i](ms_x.get_scale(i))  # query constructed from scale i
-                k_kid, v_kid = self.ms_kv_kid[i](ms_x.get_scale(i+1))  # kv constructed from scale i+1
+                k_kid, v_kid = self.ms_kv_kid[i+1](ms_x.get_scale(i+1))  # kv constructed from scale i+1
                 q_kid = ra(q_kid, 'b k h w f -> b k h w 1 f')  # query to kid
                 k_kid = ra(k_kid, 'b k (h h3) (w w3) f -> b k h w (h3 w3) f', h3=h_kids, w3=h_kids)
                 attn_kid = torch.einsum('bkhwlf,bkhwmf->bkhwlm', q_kid, k_kid) * qk_scaling_kids
@@ -352,7 +360,7 @@ class MSAttention(nn.Module):
             ms_slf_attn.append(slf_attn)
 
         ms_out = self.ms_proj(ms_slf_attn)
-        ms_out = self.ms_proj_drop(ms_slf_attn)
+        ms_out = self.ms_proj_drop(ms_out)
         return ms_out
 
 
