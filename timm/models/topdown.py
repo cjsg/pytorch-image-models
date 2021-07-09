@@ -234,7 +234,6 @@ class MSAttention(nn.Module):
         self.weight_parents = weight_parents
         self.weight_peers = weight_peers
         self.weight_kids = weight_kids
-        print('num scales = ', self.num_scales)
 
         if not attend_to_parents and weight_parents not in {0., 1.}:
             raise ValueError('Cannot specify a non-zero attention weight to parents when '
@@ -399,7 +398,7 @@ class MSTransformer(nn.Module):
         ms_out = ms_z[:self.num_scales]  # possibly ignore finest scales
         ms_out = self.ms_drop_path(self.ms_attn(self.ms_ln1(ms_z))) + ms_out
         ms_out = self.ms_drop_path(self.ms_mlp(self.ms_ln2(ms_z))) + ms_out
-        ms_out.extend(ms_z[self.num_scales:])  # concat ignored scales back
+        ms_out.extend(ms_z[self.num_scales:])  # concat ignored scales back  # TODO: check if needed
         return ms_out
 
 
@@ -479,10 +478,12 @@ def small_cifar_msvit(pretrained=False, attend_to_peers=True, attend_to_parents=
                 img_size=32,
                 num_classes=10,
                 patch_size=1,
-                words_per_block = [1, 32],  # 2, 4, 4],
+                # words_per_block = [1, 32],  # 2, 4, 4],
+                words_per_block = [1, 2, 4, 4],
                 feature_dims=192,
                 num_heads=3,
-                num_transformers=1,
+                # num_transformers=1,
+                num_transformers=12,
                 mlp_hidden_dims=4*192,
                 attend_to_peers=attend_to_peers,
                 attend_to_parents=attend_to_parents,
