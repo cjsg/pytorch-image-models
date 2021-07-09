@@ -638,12 +638,15 @@ class ResNet(nn.Module):
         self.num_features = 512 * block.expansion
         self.global_pool, self.fc = create_classifier(self.num_features, self.num_classes, pool_type=global_pool)
 
+        self.init_weights(zero_init_last_bn=zero_init_last_bn)
+
+    def init_weights(self, zero_init_last_bn=True):
         for n, m in self.named_modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1.)
-                nn.init.constant_(m.bias, 0.)
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
         if zero_init_last_bn:
             for m in self.modules():
                 if hasattr(m, 'zero_init_last_bn'):
@@ -1122,7 +1125,7 @@ def resnetrs50(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[3, 4, 6, 3], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1135,7 +1138,7 @@ def resnetrs101(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[3, 4, 23, 3], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1148,7 +1151,7 @@ def resnetrs152(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[3, 8, 36, 3], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1161,7 +1164,7 @@ def resnetrs200(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[3, 24, 36, 3], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1174,7 +1177,7 @@ def resnetrs270(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[4, 29, 53, 4], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1188,7 +1191,7 @@ def resnetrs350(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[4, 36, 72, 4], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)
@@ -1201,7 +1204,7 @@ def resnetrs420(pretrained=False, **kwargs):
     Paper: Revisiting ResNets - https://arxiv.org/abs/2103.07579
     Pretrained weights from https://github.com/tensorflow/tpu/tree/bee9c4f6/models/official/resnet/resnet_rs
     """
-    attn_layer = partial(get_attn('se'), reduction_ratio=0.25)
+    attn_layer = partial(get_attn('se'), rd_ratio=0.25)
     model_args = dict(
         block=Bottleneck, layers=[4, 44, 87, 4], stem_width=32, stem_type='deep', replace_stem_pool=True,
         avg_down=True,  block_args=dict(attn_layer=attn_layer), **kwargs)

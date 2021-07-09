@@ -33,7 +33,7 @@ def _cfg(url='', **kwargs):
         'num_classes': 1000, 'input_size': (3, 224, 224), 'pool_size': None,
         'crop_pct': .9, 'interpolation': 'bicubic', 'fixed_input_size': True,
         'mean': IMAGENET_DEFAULT_MEAN, 'std': IMAGENET_DEFAULT_STD,
-        'first_conv': 'patch_embed.proj', 'classifier': 'head',
+        'first_conv': 'patch_embeds.0.proj', 'classifier': 'head',
         **kwargs
     }
 
@@ -278,6 +278,8 @@ class Twins(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
+        self.embed_dims = embed_dims
+        self.num_features = embed_dims[-1]
 
         img_size = to_2tuple(img_size)
         prev_chs = in_chans
@@ -303,10 +305,10 @@ class Twins(nn.Module):
 
         self.pos_block = nn.ModuleList([PosConv(embed_dim, embed_dim) for embed_dim in embed_dims])
 
-        self.norm = norm_layer(embed_dims[-1])
+        self.norm = norm_layer(self.num_features)
 
         # classification head
-        self.head = nn.Linear(embed_dims[-1], num_classes) if num_classes > 0 else nn.Identity()
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         # init weights
         self.apply(self._init_weights)
@@ -320,7 +322,7 @@ class Twins(nn.Module):
 
     def reset_classifier(self, num_classes, global_pool=''):
         self.num_classes = num_classes
-        self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -361,25 +363,14 @@ class Twins(nn.Module):
         return x
 
 
-def _create_twins(variant, pretrained=False, default_cfg=None, **kwargs):
-    if default_cfg is None:
-        default_cfg = deepcopy(default_cfgs[variant])
-    overlay_external_default_cfg(default_cfg, kwargs)
-    default_num_classes = default_cfg['num_classes']
-    default_img_size = default_cfg['input_size'][-2:]
-
-    num_classes = kwargs.pop('num_classes', default_num_classes)
-    img_size = kwargs.pop('img_size', default_img_size)
+def _create_twins(variant, pretrained=False, **kwargs):
     if kwargs.get('features_only', None):
         raise RuntimeError('features_only not implemented for Vision Transformer models.')
 
     model = build_model_with_cfg(
         Twins, variant, pretrained,
-        default_cfg=default_cfg,
-        img_size=img_size,
-        num_classes=num_classes,
+        default_cfg=default_cfgs[variant],
         **kwargs)
-
     return model
 
 

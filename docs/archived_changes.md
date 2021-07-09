@@ -1,5 +1,41 @@
 # Archived Changes
 
+### Dec 18, 2020
+* Add ResNet-101D, ResNet-152D, and ResNet-200D weights trained @ 256x256
+  * 256x256 val, 0.94 crop (top-1) - 101D (82.33), 152D (83.08), 200D (83.25)
+  * 288x288 val, 1.0 crop - 101D (82.64), 152D (83.48), 200D (83.76)
+  * 320x320 val, 1.0 crop - 101D (83.00), 152D (83.66), 200D (84.01)
+
+### Dec 7, 2020
+* Simplify EMA module (ModelEmaV2), compatible with fully torchscripted models
+* Misc fixes for SiLU ONNX export, default_cfg missing from Feature extraction models, Linear layer w/ AMP + torchscript
+* PyPi release @ 0.3.2 (needed by EfficientDet)
+
+
+### Oct 30, 2020
+* Test with PyTorch 1.7 and fix a small top-n metric view vs reshape issue.
+* Convert newly added 224x224 Vision Transformer weights from official JAX repo. 81.8 top-1 for B/16, 83.1 L/16.
+* Support PyTorch 1.7 optimized, native SiLU (aka Swish) activation. Add mapping to 'silu' name, custom swish will eventually be deprecated.
+* Fix regression for loading pretrained classifier via direct model entrypoint functions. Didn't impact create_model() factory usage.
+* PyPi release @ 0.3.0 version!
+
+### Oct 26, 2020
+* Update Vision Transformer models to be compatible with official code release at https://github.com/google-research/vision_transformer
+* Add Vision Transformer weights (ImageNet-21k pretrain) for 384x384 base and large models converted from official jax impl
+  * ViT-B/16 - 84.2
+  * ViT-B/32 - 81.7
+  * ViT-L/16 - 85.2
+  * ViT-L/32 - 81.5
+
+### Oct 21, 2020
+* Weights added for Vision Transformer (ViT) models. 77.86 top-1 for 'small' and 79.35 for 'base'. Thanks to [Christof](https://www.kaggle.com/christofhenkel) for training the base model w/ lots of GPUs.
+
+### Oct 13, 2020
+* Initial impl of Vision Transformer models. Both patch and hybrid (CNN backbone) variants. Currently trying to train...
+* Adafactor and AdaHessian (FP32 only, no AMP) optimizers
+* EdgeTPU-M (`efficientnet_em`) model trained in PyTorch, 79.3 top-1
+* Pip release, doc updates pending a few more changes...
+
 ### Sept 18, 2020
 * New ResNet 'D' weights. 72.7 (top-1) ResNet-18-D, 77.1 ResNet-34-D, 80.5 ResNet-50-D
 * Added a few untrained defs for other ResNet models (66D, 101D, 152D, 200/200D)
