@@ -44,6 +44,7 @@ def create_scheduler(args, optimizer):
             optimizer,
             t_initial=num_epochs,
             t_mul=getattr(args, 'lr_cycle_mul', 1.),
+            decay_rate=args.decay_rate,
             lr_min=args.min_lr,
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
@@ -83,5 +84,7 @@ def create_scheduler(args, optimizer):
             noise_std=getattr(args, 'lr_noise_std', 1.),
             noise_seed=getattr(args, 'seed', 42),
         )
+    else:
+        raise ValueError(f'Unknown scheduler {args.sched}')
 
     return lr_scheduler, num_epochs
