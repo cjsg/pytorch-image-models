@@ -24,7 +24,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, CIFAR10_DEFAULT_MEAN, CIFAR10_DEFAULT_STD
 from .helpers import build_model_with_cfg, named_apply
 from .layers import PatchEmbed, Mlp, DropPath, create_classifier, trunc_normal_
 from .layers import create_conv2d, create_pool2d, to_ntuple
@@ -43,9 +43,23 @@ def _cfg(url='', **kwargs):
         **kwargs
     }
 
+def _cfg_cifar(url='', **kwargs):
+    return {
+        'url': url,
+        'num_classes': 10, 'input_size': (3, 32, 32), 'pool_size': [4, 4],
+        'crop_pct': .875, 'interpolation': 'bicubic', 'fixed_input_size': True,
+        'mean': CIFAR10_DEFAULT_MEAN, 'std': CIFAR10_DEFAULT_STD,
+        'first_conv': 'patch_embed.proj', 'classifier': 'head',
+        **kwargs
+    }
+
 
 default_cfgs = {
     # (weights from official Google JAX impl)
+    'nest_tiny_cifar': _cfg_cifar(),
+    'jx_nest_tiny_cifar': _cfg_cifar(),
+    'nest_tiny_cifar_sharekv': _cfg_cifar(),
+    'jx_nest_tiny_cifar_sharekv': _cfg_cifar(),
     'nest_base': _cfg(),
     'nest_small': _cfg(),
     'nest_tiny': _cfg(),
@@ -58,7 +72,7 @@ default_cfgs = {
 }
 
 
-class Attention(nn.Module):
+class MultiHeadAttention(nn.Module):
     """
     This is much like `.vision_transformer.Attention` but uses *localised* self attention by accepting an input with
      an extra "image block" dim
@@ -94,17 +108,57 @@ class Attention(nn.Module):
         return x  # (B, T, N, C)
 
 
+class MultiQueryAttention(nn.Module):
+    """
+    Same as MultiHeadAttention except that the weights of kv are shared accross the multiple heads
+    of self-attention. (Queries q remain unshared.)
+    See Fast Transformer Decoding: One Write-Head is All You Need, https://arxiv.org/abs/1911.02150
+    """
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv = nn.Linear(dim, 2*self.head_dim, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x):
+        """
+        x is shape: B (batch_size), T (image blocks), N (seq length per image block), C (embed dim)
+        """ 
+        B, T, N, C = x.shape  # C = dim  ; C // num_heads = head_dim ; H := num_heads
+        # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
+        q = self.q(x).reshape(B, T, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 2, 4)  # B H T N head_dim
+        kv = self.kv(x).reshape(B, T, N, 2, 1, self.head_dim).permute(3, 0, 4, 1, 2, 5)  # 2 B 1 T N head_dim
+        k, v = kv[0], kv[1]   # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        # (B, H, T, N, C'), permute -> (B, T, N, C', H)
+        x = (attn @ v).permute(0, 2, 3, 4, 1).reshape(B, T, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x  # (B, T, N, C)
+
+
+
 class TransformerLayer(nn.Module):
     """
     This is much like `.vision_transformer.Block` but:
         - Called TransformerLayer here to allow for "block" as defined in the paper ("non-overlapping image blocks")
-        - Uses modified Attention layer that handles the "block" dimension
+        - Uses modified MultiHeadAttention layer that handles the "block" dimension
     """
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, attn_layer=MultiHeadAttention):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
+        self.attn = attn_layer(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
@@ -173,7 +227,7 @@ class NestLevel(nn.Module):
     def __init__(
             self, num_blocks, block_size, seq_length, num_heads, depth, embed_dim, prev_embed_dim=None,
             mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rates=[],
-            norm_layer=None, act_layer=None, pad_type=''):
+            norm_layer=None, act_layer=None, attn_layer=None, pad_type=''):
         super().__init__()
         self.block_size = block_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
@@ -190,7 +244,7 @@ class NestLevel(nn.Module):
             TransformerLayer(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=drop_path_rates[i],
-                norm_layer=norm_layer, act_layer=act_layer)
+                norm_layer=norm_layer, act_layer=act_layer, attn_layer=attn_layer)
             for i in range(depth)])
 
     def forward(self, x):
@@ -213,16 +267,15 @@ class Nest(nn.Module):
     A PyTorch impl of : `Aggregating Nested Transformers`
         - https://arxiv.org/abs/2105.12723
     """
-
     def __init__(self, img_size=224, in_chans=3, patch_size=4, num_levels=3, embed_dims=(128, 256, 512),
                  num_heads=(4, 8, 16), depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.5, norm_layer=None, act_layer=None,
-                 pad_type='', weight_init='', global_pool='avg'):
+                 attn_layer=None, pad_type='', weight_init='', global_pool='avg'):
         """
         Args:
             img_size (int, tuple): input image size
             in_chans (int): number of input channels
-            patch_size (int): patch size
+            patch_size (int): patch size (S in paper)
             num_levels (int): number of block hierarchies (T_d in the paper)
             embed_dims (int, tuple): embedding dimensions of each level
             num_heads (int, tuple): number of attention heads for each level
@@ -260,6 +313,8 @@ class Nest(nn.Module):
         self.feature_info = []
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
         act_layer = act_layer or nn.GELU
+        # attn_layer = MultiQueryAttention if share_kv else MultiHeadAttention
+        attn_layer = attn_layer or MultiHeadAttention
         self.drop_rate = drop_rate
         self.num_levels = num_levels
         if isinstance(img_size, collections.abc.Sequence):
@@ -293,7 +348,8 @@ class Nest(nn.Module):
             dim = embed_dims[i]
             levels.append(NestLevel(
                 self.num_blocks[i], self.block_size, self.seq_length, num_heads[i], depths[i], dim, prev_dim,
-                mlp_ratio, qkv_bias, drop_rate, attn_drop_rate, dp_rates[i], norm_layer, act_layer, pad_type=pad_type))
+                mlp_ratio, qkv_bias, drop_rate, attn_drop_rate, dp_rates[i], norm_layer, act_layer,
+                attn_layer, pad_type=pad_type))
             self.feature_info += [dict(num_chs=dim, reduction=curr_stride, module=f'levels.{i}')]
             prev_dim = dim
             curr_stride *= 2
@@ -402,6 +458,42 @@ def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
         **kwargs)
 
     return model
+
+
+@register_model
+def nest_tiny_cifar(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
+        num_classes=10, **kwargs)
+    model = _create_nest('nest_tiny_cifar', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def jx_nest_tiny_cifar(pretrained=False, **kwargs):
+    kwargs['pad_type'] = 'same'
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
+        num_classes=10, **kwargs)
+    model = _create_nest('nest_tiny_cifar', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def nest_tiny_cifar_sharekv(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
+        num_classes=10, attn_layer=MultiQueryAttention, **kwargs)
+    model = _create_nest('nest_tiny_cifar_sharekv', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def jx_nest_tiny_cifar_sharekv(pretrained=False, **kwargs):
+    kwargs['pad_type'] = 'same'
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
+        num_classes=10, attn_layer=MultiQueryAttention, **kwargs)
+    model = _create_nest('nest_tiny_cifar_sharekv', pretrained=pretrained, **model_kwargs)
+    return model
+
 
 
 @register_model
