@@ -23,11 +23,15 @@ I'm fortunate to be able to dedicate significant time and money of my own suppor
 
 ## What's New
 
-### July 8, 2021
-* Add [SAM pretrained](https://arxiv.org/abs/2106.01548) in1k weight for ViT B/16 (`vit_base_patch16_sam_224`) and B/32 (`vit_base_patch32_sam_224`)  models.
+### July 12, 2021
+* Add XCiT models from [official facebook impl](https://github.com/facebookresearch/xcit). Contributed by [Alexander Soare](https://github.com/alexander-soare)
 
-### July 5, 2021
+### July 5-9, 2021
+* Add `efficientnetv2_rw_t` weights, a custom 'tiny' 13.6M param variant that is a bit better than (non NoisyStudent) B3 models. Both faster and better accuracy (at same or lower res)
+  * top-1 82.34 @ 288x288 and 82.54 @ 320x320
+* Add [SAM pretrained](https://arxiv.org/abs/2106.01548) in1k weight for ViT B/16 (`vit_base_patch16_sam_224`) and B/32 (`vit_base_patch32_sam_224`)  models.
 * Add 'Aggregating Nested Transformer' (NesT) w/ weights converted from official [Flax impl](https://github.com/google-research/nested-transformer). Contributed by [Alexander Soare](https://github.com/alexander-soare).
+  * `jx_nest_base` - 83.534, `jx_nest_small` - 83.120, `jx_nest_tiny` - 81.426
 
 ### June 23, 2021
 * Reproduce gMLP model training, `gmlp_s16_224` trained to 79.6 top-1, matching [paper](https://arxiv.org/abs/2105.08050). Hparams for this and other recent MLP training [here](https://gist.github.com/rwightman/d6c264a9001f9167e06c209f630b2cc6)
@@ -210,6 +214,7 @@ All model architecture families include variants with pretrained weights. There 
 
 A full version of the list below with source links can be found in the [documentation](https://rwightman.github.io/pytorch-image-models/models/).
 
+* Aggregating Nested Transformers - https://arxiv.org/abs/2105.12723
 * Big Transfer ResNetV2 (BiT) - https://arxiv.org/abs/1912.11370
 * Bottleneck Transformers - https://arxiv.org/abs/2101.11605
 * CaiT (Class-Attention in Image Transformers) - https://arxiv.org/abs/2103.17239
@@ -274,6 +279,7 @@ A full version of the list below with source links can be found in the [document
 * Xception - https://arxiv.org/abs/1610.02357
 * Xception (Modified Aligned, Gluon) - https://arxiv.org/abs/1802.02611
 * Xception (Modified Aligned, TF) - https://arxiv.org/abs/1802.02611
+* XCiT (Cross-Covariance Image Transformers) - https://arxiv.org/abs/2106.09681
 
 ## Features
 
