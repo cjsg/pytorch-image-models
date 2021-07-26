@@ -19,6 +19,7 @@ from .inception_v4 import *
 from .levit import *
 from .mlp_mixer import *
 from .mobilenetv3 import *
+from .multiresolution import *
 from .nasnet import *
 from .nest import *
 from .nfnet import *
