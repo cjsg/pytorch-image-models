@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-# from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, CIFAR10_DEFAULT_MEAN, CIFAR10_DEFAULT_STD
+from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, CIFAR10_DEFAULT_MEAN, CIFAR10_DEFAULT_STD
 from .helpers import build_model_with_cfg, named_apply
 from .layers import PatchEmbed, Mlp, DropPath, create_classifier, trunc_normal_
 from .layers import create_conv2d, create_pool2d, to_ntuple
@@ -32,6 +32,19 @@ from einops import rearrange as ra
 
 _logger = logging.getLogger(__name__)
 
+def _cfg_cifar(url='', **kwargs):
+    return {
+        'url': url,
+        'num_classes': 10, 'input_size': (3, 32, 32), 'pool_size': [4, 4],
+        'crop_pct': .875, 'interpolation': 'bicubic', 'fixed_input_size': True,
+        'mean': CIFAR10_DEFAULT_MEAN, 'std': CIFAR10_DEFAULT_STD,
+        'first_conv': 'patch_embed.proj', 'classifier': 'head',
+        **kwargs
+    }
+
+default_cfgs = {
+    'multiresolution': _cfg_cifar()
+}
 
 class PoolingLayers(nn.Module):
     def __init__(self, num_levels, dim):
@@ -263,7 +276,7 @@ class TopDown(nn.Module):
             curr_stride *= 2
         uplevels.reverse()
         self.downlevels = nn.Sequential(*downlevels)
-        self.uplevels = nn.Sequential(*downlevels[::-1])
+        self.uplevels = nn.Sequential(*uplevels[::-1])
 
         # Final normalization layer
         self.norm = norm_layer(embed_dim)
@@ -282,7 +295,8 @@ class TopDown(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {f'level.{i}.pos_embed' for i in range(len(self.levels))}
+        return {}  # TODO: fix this
+        # return {f'level.{i}.pos_embed' for i in range(len(self.levels))}
 
     def get_classifier(self):
         return self.head
@@ -337,3 +351,54 @@ def _init_weights(module: nn.Module, name: str = '', head_bias: float = 0.):
     elif isinstance(module, (nn.LayerNorm, nn.GroupNorm, nn.BatchNorm2d)):
         nn.init.zeros_(module.bias)
         nn.init.ones_(module.weight)
+
+# def resize_pos_embed(posemb, posemb_new):
+#     """
+#     Rescale the grid of position embeddings when loading from state_dict
+#     Expected shape of position embeddings is (1, T, N, C), and considers only square images
+#     """
+#     _logger.info('Resized position embedding: %s to %s', posemb.shape, posemb_new.shape)
+#     seq_length_old = posemb.shape[2]
+#     num_blocks_new, seq_length_new = posemb_new.shape[1:3]
+#     size_new = int(math.sqrt(num_blocks_new*seq_length_new))
+#     # First change to (1, C, H, W)
+#     posemb = deblockify(posemb, int(math.sqrt(seq_length_old))).permute(0, 3, 1, 2)
+#     posemb = F.interpolate(posemb, size=[size_new, size_new], mode='bicubic', align_corners=False)
+#     # Now change to new (1, T, N, C)
+#     posemb = blockify(posemb.permute(0, 2, 3, 1), int(math.sqrt(seq_length_new)))
+#     return posemb
+# 
+# 
+# def checkpoint_filter_fn(state_dict, model):
+#     """ resize positional embeddings of pretrained weights """
+#     pos_embed_keys = [k for k in state_dict.keys() if k.startswith('pos_embed_')]
+#     for k in pos_embed_keys:
+#         if state_dict[k].shape != getattr(model, k).shape:
+#             state_dict[k] = resize_pos_embed(state_dict[k], getattr(model, k))
+#     return state_dict
+
+
+def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
+    default_cfg = default_cfg or default_cfgs[variant]
+    model = build_model_with_cfg(
+        TopDown, variant, pretrained,
+        default_cfg=default_cfg,
+        feature_cfg=dict(out_indices=(0, 1, 2), flatten_sequential=True),
+        # pretrained_filter_fn=checkpoint_filter_fn,  # TODO: write positional embedding function
+        **kwargs)
+
+    return model
+
+
+@register_model
+def multiresolution(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
+        num_classes=10, **kwargs)
+    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+# @register_model
+# def multiresolution(pretrained=False, **kwargs):
+#     model = TopDown()
+#     return model
