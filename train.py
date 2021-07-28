@@ -72,9 +72,11 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
 # Dataset / Model parameters
 parser.add_argument('data_dir', metavar='DIR',
-                    help='path to dataset')
+                    help='path to dataset. '
+                         'If path contains `lmdb`, then LMDBIterDataset/Loader is used.')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='',
-                    help='dataset type (default: ImageFolder/ImageTar if empty)')
+                    help='dataset type (default: ImageFolder/ImageTar if empty). '
+                         'If path contains `lmdb`, then LMDBIterDataset/Loader')
 parser.add_argument('--train-split', metavar='NAME', default='train',
                     help='dataset train split (default: train)')
 parser.add_argument('--val-split', metavar='NAME', default='validation',
