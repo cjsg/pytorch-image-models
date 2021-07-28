@@ -150,7 +150,6 @@ def transforms_imagenet_eval(
         transforms.Resize(scale_size, _pil_interp(interpolation)),
         transforms.CenterCrop(img_size),
     ]
-    print(f'use_prefetcher {use_prefetcher}, mean {mean}, std {std}')
     if use_prefetcher:
         # prefetcher and collate will handle tensor conversion and norm
         tfl += [ToNumpy()]
