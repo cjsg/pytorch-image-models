@@ -46,32 +46,55 @@ default_cfgs = {
     'multiresolution': _cfg_cifar()
 }
 
-class PoolingLayers(nn.Module):
-    def __init__(self, num_levels, dim, pooltype='conv-maxpool3'):
+class Pooling(nn.Module):
+    def __init__(self, dim, pooltype='conv-maxpool3'):
         '''
         num_levels: number of scales in the hierarchy
         dim: number of dimensions in attention layer
         '''
         super().__init__()
+        pooltypes = pooltype.split('-')
+        layers = []
+        for name in pooltypes:
+            if name == 'conv3':
+                layers.append(
+                    nn.Conv2d(dim, dim, kernel_size=3, stride=2, groups=dim, bias=False))
+            elif name in {'conv', 'conv2'}:
+                layers.append(
+                    nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False))
+            elif name in {'mp3', 'maxpool3'}:
+                layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+            elif name in {'maxpool', 'maxpool2', 'mp', 'mp2'}:
+                layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
+            elif name in {'ln', 'norm', 'layernorm'}:
+                layers.append(nn.LayerNorm(dim))
+            else:
+                raise NotImplementedError(f'pooltype {pooltype} unknown')
+        self.layers = nn.ModuleList(layers)
+        print(self.layers)
+
+    def forward(self, x):
+        """
+        x.shape expected to be B C H W
+        """
+        for layer in self.layers:
+            if type(layer) == nn.LayerNorm:
+                x = layer(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            else:
+                x = layer(x)
+        return x  # B C H W
+
+
+class PoolingLayers(nn.Module):
+    def __init__(self, num_levels, dim, pooltype='conv3-ln-maxpool3'):
+        """
+        num_levels: number of scales in the hierarchy
+        dim: number of dimensions in attention layer
+        pooltype: combination of 'conv', 'conv3', 'ln', 'maxpool', 'maxpool3' separated by '-'
+        """
+        super().__init__()
         self.num_levels = num_levels
-        if pooltype == 'conv':
-            self.poolings = nn.ModuleList([
-                nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False)
-                    for _ in range(num_levels-1)])
-        elif pooltype.startswith('conv-maxpool'):
-            if pooltype == 'conv-maxpool':
-                kernel_size, stride, padding = 2, 2, 0
-            else:  # pooltype == 'conv-maxpool3'
-                kernel_size, stride, padding = 3, 2, 1
-            print(f'maxpool kernel_size = {kernel_size}')
-            self.poolings = nn.ModuleList([
-                nn.Sequential(
-                    nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=False),
-                    nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding))
-                        for _ in range(num_levels-1)])
-        else:
-            raise NotImplementedError(
-                f'`pooltype` {pooltype} unknown for PoolingLayers')
+        self.poolings = nn.ModuleList([Pooling(dim, pooltype) for _ in range(num_levels-1)])
 
     def forward(self, x, level=0):
         if len(x.shape) == 5:
