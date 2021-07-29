@@ -47,21 +47,32 @@ default_cfgs = {
 }
 
 class PoolingLayers(nn.Module):
-    def __init__(self, num_levels, dim):
+    def __init__(self, num_levels, dim, pooltype='conv-maxpool'):
         '''
         num_levels: number of scales in the hierarchy
         dim: number of dimensions in attention layer
         '''
         super().__init__()
         self.num_levels = num_levels
-        self.poolings = nn.ModuleList([
-            nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False)
-                for _ in range(num_levels-1)])
+        if pooltype == 'conv':
+            self.poolings = nn.ModuleList([
+                nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False)
+                    for _ in range(num_levels-1)])
+        elif pooltype == 'conv-maxpool':
+            self.poolings = nn.ModuleList([
+                nn.Sequential(
+                    nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=False),
+                    nn.MaxPool2d(2))
+                        for _ in range(num_levels-1)])
+        else:
+            raise NotImplementedError(
+                f'`pooltype` {pooltype} unknown for PoolingLayers')
 
     def forward(self, x, level=0):
         if len(x.shape) == 5:
             B, T, H, W, C = x.shape
-            x = x.reshape(B*T, H, W, C)
+            bH = bW = int(math.sqrt(T))  # block-hight/width (assumes original image was square)
+            x = ra(x, 'B (bH bW) H W C -> B (bH H) (bW W) C', bH=bH, bW=bW)
         else:
             T = None
         x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
@@ -69,7 +80,7 @@ class PoolingLayers(nn.Module):
             x = self.poolings[i](x)
         x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
         if T is not None:
-            x = ra(x, '(B T) h w C -> B T h w C', B=B)
+            x = ra(x, 'B (bH h) (bW w) C -> B (bH bW) h w C', bH=bH, bW=bW)
         return x
 
 
@@ -342,8 +353,9 @@ def _init_weights(module: nn.Module, name: str = '', head_bias: float = 0.):
                 nn.init.zeros_(module.bias)
     elif isinstance(module, nn.Conv2d):
         if 'poolings' in name:
-            print(f'Initializing pooling conv layer in {name}')
-            nn.init.constant_(module.weight, .25)
+            _, c, kH, kW = module.weight.shape
+            nn.init.constant_(module.weight, 1./(c*kH*kW))
+            print(f'Initializing pooling conv layer in {name} with weight {1./(c*kH*kW)}')
         else:
             trunc_normal_(module.weight, std=.02, a=-2, b=2)
             if module.bias is not None:
