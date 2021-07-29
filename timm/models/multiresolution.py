@@ -47,7 +47,7 @@ default_cfgs = {
 }
 
 class PoolingLayers(nn.Module):
-    def __init__(self, num_levels, dim, pooltype='conv-maxpool'):
+    def __init__(self, num_levels, dim, pooltype='conv-maxpool3'):
         '''
         num_levels: number of scales in the hierarchy
         dim: number of dimensions in attention layer
@@ -58,11 +58,16 @@ class PoolingLayers(nn.Module):
             self.poolings = nn.ModuleList([
                 nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False)
                     for _ in range(num_levels-1)])
-        elif pooltype == 'conv-maxpool':
+        elif pooltype.startswith('conv-maxpool'):
+            if pooltype == 'conv-maxpool':
+                kernel_size, stride, padding = 2, 2, 0
+            else:  # pooltype == 'conv-maxpool3'
+                kernel_size, stride, padding = 3, 2, 1
+            print(f'maxpool kernel_size = {kernel_size}')
             self.poolings = nn.ModuleList([
                 nn.Sequential(
                     nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=False),
-                    nn.MaxPool2d(2))
+                    nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding))
                         for _ in range(num_levels-1)])
         else:
             raise NotImplementedError(
