@@ -47,7 +47,7 @@ default_cfgs = {
 }
 
 class Pooling(nn.Module):
-    def __init__(self, dim, pooltype='conv-maxpool3'):
+    def __init__(self, dim, pooltype):
         '''
         num_levels: number of scales in the hierarchy
         dim: number of dimensions in attention layer
@@ -71,7 +71,6 @@ class Pooling(nn.Module):
             else:
                 raise NotImplementedError(f'pooltype {pooltype} unknown')
         self.layers = nn.ModuleList(layers)
-        print(self.layers)
 
     def forward(self, x):
         """
