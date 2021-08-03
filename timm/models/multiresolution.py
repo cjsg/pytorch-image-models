@@ -235,7 +235,7 @@ class TopDown(nn.Module):
     def __init__(self, img_size=32, in_chans=3, patch_size=1, num_levels=3, embed_dim=192,
                  num_heads=(3, 3, 3), depths=(1, 1, 1), num_classes=10, mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.5, norm_layer=None, act_layer=None,
-                 attn_layer=None, pad_type='', weight_init='', global_pool='avg'):
+                 attn_layer=None, pad_type='', weight_init='', global_pool='avg', no_downlevels=False):
         """
         Args:
             img_size (int, tuple): input image size
@@ -256,6 +256,7 @@ class TopDown(nn.Module):
             pad_type: str: Type of padding to use '' for PyTorch symmetric, 'same' for TF SAME
             weight_init: (str): weight init scheme
             global_pool: (str): type of pooling operation to apply to final feature map
+            no_downlevels (bool): use only up-levels, i.e., feed-forward arch
 
         Notes:
             - `num_heads`, `depths` should be ints or tuples with length `num_levels`.
@@ -308,12 +309,13 @@ class TopDown(nn.Module):
         for l in range(num_levels):
             args = [l, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio, qkv_bias, drop_rate,
                     attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer, pad_type]
-            downlevels.append(TransformerLevel(*args))
+            if not no_downlevels:
+                downlevels.append(TransformerLevel(*args))
             uplevels.append(TransformerLevel(*args))
             self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'levels.{l}')]
             curr_stride *= 2
         uplevels.reverse()
-        self.downlevels = nn.Sequential(*downlevels)
+        self.downlevels = nn.Identity() if no_downlevels else nn.Sequential(*downlevels)
         self.uplevels = nn.Sequential(*uplevels[::-1])
 
         # Final normalization layer
@@ -434,6 +436,14 @@ def multiresolution(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
         num_classes=10, **kwargs)
+    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def multiresolution_nest(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=4,
+        num_classes=10, no_downlevels=True, **kwargs)
     model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
 
