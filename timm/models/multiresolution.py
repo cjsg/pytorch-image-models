@@ -96,18 +96,19 @@ class PoolingLayers(nn.Module):
         self.poolings = nn.ModuleList([Pooling(dim, pooltype) for _ in range(num_levels-1)])
 
     def forward(self, x, level=0):
-        if len(x.shape) == 5:
+        blocked_img = (len(x.shape) == 5)
+        if blocked_img:
             B, T, H, W, C = x.shape
-            bH = bW = int(math.sqrt(T))  # block-hight/width (assumes original image was square)
-            x = ra(x, 'B (bH bW) H W C -> B (bH H) (bW W) C', bH=bH, bW=bW)
-        else:
-            T = None
+            Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
+            x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
+
         x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
         for i in range(self.num_levels-1-level):
             x = self.poolings[i](x)
         x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
-        if T is not None:
-            x = ra(x, 'B (bH h) (bW w) C -> B (bH bW) h w C', bH=bH, bW=bW)
+
+        if blocked_img:
+            x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
         return x
 
 
@@ -139,7 +140,7 @@ class ScaledAttention(nn.Module):
             K denotes the number of heads
         """ 
         z = self.poolings(x, self.level)
-        B, T, H, W, C = x.shape  # B T C (h k) (w l)
+        B, T, H, W, C = x.shape  # B T (h k) (w l) C
         B, T, h, w, C = z.shape
 
         z = ra(z, 'B T h w C -> B T (h w) C')  # B T P C
@@ -156,8 +157,7 @@ class ScaledAttention(nn.Module):
         attn = self.attn_drop(attn)
         attn = attn[:, :, :, None, :, :]  # B K T 1 P P
 
-        # (B, K, T, N, P, c), permute -> (B, T, N, P, c, K)
-        x = ra(attn @ v, 'B K T N P c -> B T N P (K c)')  # B T N P C
+        x = ra(attn @ v, 'B K T N P c -> B T N P (K c)')  # B T N P C   # TODO: test (c K)
         x = self.proj(x)  # TODO: why do we need projection here, if we continue with MLP anyway?
         x = self.proj_drop(x)
         x = ra(x, 'B T (i j) (h w) C -> B T (h i) (w j) C', h=h, i=H//h)  # B T H W C
