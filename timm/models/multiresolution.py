@@ -31,6 +31,7 @@ from .registry import register_model
 from einops import rearrange as ra
 
 _logger = logging.getLogger(__name__)
+_logger.setLevel(logging.WARNING)
 
 def _cfg_cifar(url='', **kwargs):
     return {
@@ -46,46 +47,100 @@ default_cfgs = {
     'multiresolution': _cfg_cifar()
 }
 
-class Pooling(nn.Module):
-    def __init__(self, dim, pooltype):
-        '''
-        num_levels: number of scales in the hierarchy
-        dim: number of dimensions in attention layer
-        '''
-        super().__init__()
-        pooltypes = pooltype.split('-')
-        layers = []
-        for name in pooltypes:
-            if name == 'conv3':
-                layers.append(
-                    nn.Conv2d(dim, dim, kernel_size=3, stride=2, groups=dim, bias=False))
-            elif name in {'conv', 'conv2'}:
-                layers.append(
-                    nn.Conv2d(dim, dim, kernel_size=2, stride=2, groups=dim, bias=False))
-            elif name in {'mp3', 'maxpool3'}:
-                layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
-            elif name in {'maxpool', 'maxpool2', 'mp', 'mp2'}:
-                layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-            elif name in {'ln', 'norm', 'layernorm'}:
-                layers.append(nn.LayerNorm(dim))
-            else:
-                raise NotImplementedError(f'pooltype {pooltype} unknown')
-        self.layers = nn.ModuleList(layers)
+# class Pooling(nn.Module):
+#     def __init__(self, dim, pooltype):
+#         '''
+#         num_levels: number of scales in the hierarchy
+#         dim: number of dimensions in attention layer
+#         '''
+#         super().__init__()
+#         pooltypes = pooltype.split('-')
+#         layers = []
+#         for name in pooltypes:
+#             if name == 'conv3':
+#                 layers.append(
+#                     # nn.Conv2d(dim, dim, kernel_size=3, stride=2, bias=False, padding=1, groups=dim, bias=False))
+#                     nn.Conv2d(dim, dim, kernel_size=3, stride=1, bias=True, padding=1)) # groups=dim, bias=False))
+#             elif name in {'conv', 'conv2'}:
+#                 layers.append(
+#                     # nn.Conv2d(dim, dim, kernel_size=2, stride=2, bias=False, groups=dim, bias=False))
+#                     nn.Conv2d(dim, dim, kernel_size=2, stride=1, bias=False))  # groups=dim, bias=False))
+#             elif name in {'mp3', 'maxpool3'}:
+#                 layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+#             elif name in {'maxpool', 'maxpool2', 'mp', 'mp2'}:
+#                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
+#             elif name in {'ln', 'norm', 'layernorm'}:
+#                 layers.append(nn.LayerNorm(dim))
+#             else:
+#                 raise NotImplementedError(f'pooltype {pooltype} unknown')
+#         self.layers = nn.ModuleList(layers)
+# 
+#     def forward(self, x):
+#         """
+#         x.shape expected to be B C H W
+#         """
+#         for layer in self.layers:
+#             if type(layer) == nn.LayerNorm:
+#                 x = layer(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+#             else:
+#                 x = layer(x)
+#         return x  # B C H W
 
-    def forward(self, x):
-        """
-        x.shape expected to be B C H W
-        """
-        for layer in self.layers:
-            if type(layer) == nn.LayerNorm:
-                x = layer(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-            else:
-                x = layer(x)
-        return x  # B C H W
+# class Pooling(nn.Module):
+#     def __init__(self, dim, pooltype):
+#         '''
+#         num_levels: number of scales in the hierarchy
+#         dim: number of dimensions in attention layer
+#         '''
+#         super().__init__()
+#         pooltypes = pooltype.split('-')
+#         self.conv = nn.Conv2d(dim, dim, kernel_size=3, stride=1, bias=True, padding=1)
+#         # self.mxp = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+#         self.mxp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+# 
+#     def forward(self, x, do_conv=True, downscale=True):
+#         """
+#         x.shape expected to be B C H W
+#         """
+#         if do_conv:
+#             x = self.conv(x)
+#         if downscale:
+#             x = self.mxp(x)
+#         return x  # B C H W
 
+
+# class PoolingLayers(nn.Module):
+#     def __init__(self, num_levels, dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
+#         """
+#         num_levels: number of scales in the hierarchy
+#         dim: number of dimensions in attention layer
+#         pooltype: combination of 'conv', 'conv3', 'ln', 'maxpool', 'maxpool3' separated by '-'
+#         """
+#         super().__init__()
+#         self.num_levels = num_levels
+#         self.poolings = nn.ModuleList([Pooling(dim, pooltype) for _ in range(num_levels-1)])  # reverse order: smallest scale first
+# 
+#     def forward(self, x, level=0, do_conv=True, downscale=True):
+#         if level < (self.num_levels-1):
+#             # _logger.info(f'level: {level}, num_levels: {self.num_levels}, len(poolings): {len(self.poolings)}, i: {self.num_levels-1-level}')
+#             blocked_img = (len(x.shape) == 5)
+#             if blocked_img:
+#                 B, T, H, W, C = x.shape
+#                 Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
+#                 x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
+# 
+#             x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
+#             for i in range(self.num_levels-1-level):
+#                 x = self.poolings[i](x, do_conv, downscale)
+#             # x = self.poolings[self.num_levels-2-level](x, do_conv, downscale)
+#             x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
+# 
+#             if blocked_img:
+#                 x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
+#         return x
 
 class PoolingLayers(nn.Module):
-    def __init__(self, num_levels, dim, pooltype='conv3-ln-maxpool3'):
+    def __init__(self, num_levels, dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
         """
         num_levels: number of scales in the hierarchy
         dim: number of dimensions in attention layer
@@ -93,22 +148,38 @@ class PoolingLayers(nn.Module):
         """
         super().__init__()
         self.num_levels = num_levels
-        self.poolings = nn.ModuleList([Pooling(dim, pooltype) for _ in range(num_levels-1)])
+        self.convs = nn.ModuleList([
+            # nn.Conv2d(dim, dim, kernel_size=3, stride=1, dilation=(2**i), padding='same')
+            nn.Sequential(
+                nn.Conv2d(dim, dim, kernel_size=3, stride=1, dilation=(2**i), padding='same'),
+                nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+            )
+                for i in range(num_levels-1)])
+        self.pools = nn.ModuleList([
+            # TODO: maybe change here
+            # nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+                for _ in range(num_levels-1)])
 
-    def forward(self, x, level=0):
-        blocked_img = (len(x.shape) == 5)
-        if blocked_img:
-            B, T, H, W, C = x.shape
-            Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
-            x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
+    def forward(self, x, level=0, do_conv=True, downscale=True):
+        if level < (self.num_levels-1):
+            blocked_img = (len(x.shape) == 5)
+            if blocked_img:
+                B, T, H, W, C = x.shape
+                Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
+                x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
 
-        x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
-        for i in range(self.num_levels-1-level):
-            x = self.poolings[i](x)
-        x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
+            x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
+            if do_conv:
+                x = self.convs[self.num_levels-2-level](x)
+            if downscale:
+                for i in range(self.num_levels-1-level):
+                    x = self.pools[i](x)
+                    # x = x[:,:,::2,::2]
+            x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
 
-        if blocked_img:
-            x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
+            if blocked_img:
+                x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
         return x
 
 
@@ -117,7 +188,8 @@ class ScaledAttention(nn.Module):
     This is much like `.vision_transformer.Attention` but uses *localised* self attention by accepting an input with
      an extra "image block" dim
     """
-    def __init__(self, level, poolings, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
+    def __init__(self, level, poolings, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.,
+                 norm_layer=nn.LayerNorm):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -125,6 +197,7 @@ class ScaledAttention(nn.Module):
 
         self.level = level  # level of this attention module (0 = largest scale)
         self.poolings = poolings  # B C H W -> B C h w
+        self.norm1 = norm_layer(dim)  # in NesT, this is self.norm1 in TransformerLayer
         self.qk = nn.Linear(dim, 2*dim, bias=qkv_bias)
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -139,12 +212,16 @@ class ScaledAttention(nn.Module):
             patch is a group of pixels that has been downscaled/pooled to the current level/scale.
             K denotes the number of heads
         """ 
-        z = self.poolings(x, self.level)
+        # x = self.poolings(x, self.level, do_conv=True, downscale=False)  # conv applied in TransformerLevel
+        z = self.poolings(x, self.level, do_conv=False, downscale=True)
         B, T, H, W, C = x.shape  # B T (h k) (w l) C
         B, T, h, w, C = z.shape
 
         z = ra(z, 'B T h w C -> B T (h w) C')  # B T P C
         x = ra(x, 'B T (h i) (w j) C -> B T (i j) (h w) C', h=h, w=w)  # B T N P C
+        z = self.norm1(z)  # in NesT, this is self.norm1 in TransformerLayer
+        # TODO: change back here
+        x = self.norm1(x)  # in NesT, this is self.norm1 in TransformerLayer; BEWARE: after norm1, z != maxpool(x)
         N = x.shape[2]  # nbr of pixels per patch (i.e., of high-res pixels per low-res pixel)
         P = z.shape[2]  # nbr of patches (at current level) per block = h*w
 
@@ -157,7 +234,8 @@ class ScaledAttention(nn.Module):
         attn = self.attn_drop(attn)
         attn = attn[:, :, :, None, :, :]  # B K T 1 P P
 
-        x = ra(attn @ v, 'B K T N P c -> B T N P (K c)')  # B T N P C   # TODO: test (c K)
+        # x = ra(attn @ v, 'B K T N P c -> B T N P (K c)')  # B T N P C
+        x = ra(attn @ v, 'B K T N P c -> B T N P (c K)')  # B T N P C   # TODO: test (c K)
         x = self.proj(x)  # TODO: why do we need projection here, if we continue with MLP anyway?
         x = self.proj_drop(x)
         x = ra(x, 'B T (i j) (h w) C -> B T (h i) (w j) C', h=h, i=H//h)  # B T H W C
@@ -174,9 +252,10 @@ class TransformerLayer(nn.Module):
                  attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  attn_layer=ScaledAttention):
         super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = attn_layer(level, poolings, dim, num_heads=num_heads,
-                               qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
+        self.level = level
+        self.poolings = poolings  # B C H W -> B C h w
+        self.attn = attn_layer(level, poolings, dim, num_heads=num_heads, qkv_bias=qkv_bias,
+                               attn_drop=attn_drop, proj_drop=drop, norm_layer=norm_layer)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
@@ -186,8 +265,7 @@ class TransformerLayer(nn.Module):
         """
         x.shape = B T H W C
         """
-        y = self.norm1(x)  # TODO: maybe move to inside ScaledAttention, after downscaling/pooling
-        x = x + self.drop_path(self.attn(y))
+        x = x + self.drop_path(self.attn(x))  # moved self.norm1 inside of self.attn
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -202,6 +280,7 @@ class TransformerLevel(nn.Module):
         super().__init__()
 
         self.level = level
+        self.poolings = poolings
 
         # Transformer encoder
         if len(drop_path_rates):
@@ -222,8 +301,10 @@ class TransformerLevel(nn.Module):
 
         # blockify
         x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
+        y = ra(x, 'B T h w C -> B T (h w) C')
 
         # layers
+        x = self.poolings(x, self.level, do_conv=True, downscale=False)  # apply conv
         x = self.transformer_layers(x)  # (B, T, H', W', C)
 
         # deblockify
@@ -316,7 +397,7 @@ class TopDown(nn.Module):
             curr_stride *= 2
         uplevels.reverse()
         self.downlevels = nn.Identity() if no_downlevels else nn.Sequential(*downlevels)
-        self.uplevels = nn.Sequential(*uplevels[::-1])
+        self.uplevels = nn.Sequential(*uplevels)
 
         # Final normalization layer
         self.norm = norm_layer(embed_dim)
@@ -354,7 +435,8 @@ class TopDown(nn.Module):
         x = x + self.pos_embed
         x = self.downlevels(x)  # B H W C
         x = self.uplevels(x)  # B H W C
-        x = self.poolings(x, level=0)  # B H W C
+        # TODO: check here if we should use do_conv
+        x = self.poolings(x, level=0, do_conv=False, downscale=True)  # B H W C
         x = self.norm(x)  # TODO: test exchanging this and previous lines
         return x.permute(0,3,1,2)  # -> B C H W
 
@@ -381,10 +463,10 @@ def _init_weights(module: nn.Module, name: str = '', head_bias: float = 0.):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
     elif isinstance(module, nn.Conv2d):
-        if 'poolings' in name:
+        if False:  # 'poolings' in name:
             _, c, kH, kW = module.weight.shape
             nn.init.constant_(module.weight, 1./(c*kH*kW))
-            print(f'Initializing pooling conv layer in {name} with weight {1./(c*kH*kW)}')
+            _logger.info(f'Initializing pooling conv layer in {name} with weight {1./(c*kH*kW)}')
         else:
             trunc_normal_(module.weight, std=.02, a=-2, b=2)
             if module.bias is not None:
@@ -442,12 +524,7 @@ def multiresolution(pretrained=False, **kwargs):
 @register_model
 def multiresolution_nest(pretrained=False, **kwargs):
     model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=4,
+        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
         num_classes=10, no_downlevels=True, **kwargs)
     model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
-
-# @register_model
-# def multiresolution(pretrained=False, **kwargs):
-#     model = TopDown()
-#     return model

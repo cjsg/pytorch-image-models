@@ -31,6 +31,7 @@ from .layers import create_conv2d, create_pool2d, to_ntuple
 from .registry import register_model
 
 _logger = logging.getLogger(__name__)
+_logger.setLevel(logging.WARNING)
 
 
 def _cfg(url='', **kwargs):
@@ -56,6 +57,7 @@ def _cfg_cifar(url='', **kwargs):
 
 default_cfgs = {
     # (weights from official Google JAX impl)
+    'nest_mini_cifar': _cfg_cifar(),
     'nest_tiny_cifar': _cfg_cifar(),
     'jx_nest_tiny_cifar': _cfg_cifar(),
     'nest_tiny_cifar_sharekv': _cfg_cifar(),
@@ -72,41 +74,7 @@ default_cfgs = {
 }
 
 
-class MultiHeadAttention(nn.Module):
-    """
-    This is much like `.vision_transformer.Attention` but uses *localised* self attention by accepting an input with
-     an extra "image block" dim
-    """
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
-
-        self.qkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-    def forward(self, x):
-        """
-        x is shape: B (batch_size), T (image blocks), N (seq length per image block), C (embed dim)
-        """ 
-        B, T, N, C = x.shape
-        # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
-        qkv = self.qkv(x).reshape(B, T, N, 3, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        # (B, H, T, N, C'), permute -> (B, T, N, C', H)
-        x = (attn @ v).permute(0, 2, 3, 4, 1).reshape(B, T, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x  # (B, T, N, C)
-
+from einops import rearrange as ra
 
 class MultiQueryAttention(nn.Module):
     """
@@ -147,6 +115,44 @@ class MultiQueryAttention(nn.Module):
         return x  # (B, T, N, C)
 
 
+class MultiHeadAttention(nn.Module):
+    """
+    This is much like `.vision_transformer.Attention` but uses *localised* self attention by accepting an input with
+     an extra "image block" dim
+    """
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+
+        self.qk = nn.Linear(dim, 2*dim, bias=qkv_bias)
+        self.v = nn.Linear(dim, dim, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x):
+        """
+        x is shape: B (batch_size), T (image blocks), N (seq length per image block), C (embed dim)
+        """ 
+        B, T, N, C = x.shape
+        # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
+        # TODO: change back to qkv
+        v = self.v(x).reshape(B, T, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 2, 4)
+        qk = self.qk(x).reshape(B, T, N, 2, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
+        q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        # (B, H, T, N, C'), permute -> (B, T, N, C', H)
+        x = (attn @ v).permute(0, 2, 3, 4, 1).reshape(B, T, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x  # (B, T, N, C)
+
 
 class TransformerLayer(nn.Module):
     """
@@ -168,8 +174,7 @@ class TransformerLayer(nn.Module):
         """
         expects x of dim B T N C
         """
-        y = self.norm1(x)
-        x = x + self.drop_path(self.attn(y))
+        x = x + self.drop_path(self.attn(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -177,9 +182,16 @@ class TransformerLayer(nn.Module):
 class ConvPool(nn.Module):
     def __init__(self, in_channels, out_channels, norm_layer, pad_type=''):
         super().__init__()
+        # TODO: change here
+        # self.conv = nn.Identity()
         self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
-        self.norm = norm_layer(out_channels)
-        self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
+        # self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=True, padding=1)
+        # self.norm = norm_layer(out_channels)
+        # TODO: CHANGE HERE
+        self.pool = nn.MaxPool2d(kernel_size=4, stride=2, padding=1)
+        # self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
+        # self.pool = create_pool2d('max', kernel_size=2, stride=2, padding=0)
+        # self.pool = nn.Identity()
 
     def forward(self, x):
         """
@@ -189,7 +201,7 @@ class ConvPool(nn.Module):
         assert x.shape[-1] % 2 == 0, 'BlockAggregation requires even input spatial dims'
         x = self.conv(x)
         # Layer norm done over channel dim only
-        x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        # x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         x = self.pool(x)
         return x  # (B, C, H//2, W//2)
 
@@ -233,12 +245,22 @@ class NestLevel(nn.Module):
             norm_layer=None, act_layer=None, attn_layer=None, pad_type=''):
         super().__init__()
         self.block_size = block_size
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
 
         if prev_embed_dim is not None:
             self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+            self.has_pos_embed = False
         else:
             self.pool = nn.Identity()
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
+            self.has_pos_embed = True
+
+        # self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
+        # self.has_pos_embed = True
+        # if prev_embed_dim is not None:
+        #     self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+        # else:
+        #     self.pool = nn.Identity()
+
 
         # Transformer encoder
         if len(drop_path_rates):
@@ -257,7 +279,8 @@ class NestLevel(nn.Module):
         x = self.pool(x)
         x = x.permute(0, 2, 3, 1)  # (B, H', W', C), switch to channels last for transformer
         x = blockify(x, self.block_size)  # (B, T, N, C')
-        x = x + self.pos_embed
+        if self.has_pos_embed:
+            x = x + self.pos_embed
         x = self.transformer_encoder(x)  # (B, T, N, C')
         x = deblockify(x, self.block_size)  # (B, H', W', C')
         # Channel-first for block aggregation, and generally to replicate convnet feature map at each stage
@@ -370,7 +393,8 @@ class Nest(nn.Module):
         assert mode in ('nlhb', '')
         head_bias = -math.log(self.num_classes) if 'nlhb' in mode else 0.
         for level in self.levels:
-            trunc_normal_(level.pos_embed, std=.02, a=-2, b=2)
+            if hasattr(level, 'pos_embed'):
+                trunc_normal_(level.pos_embed, std=.02, a=-2, b=2)
         named_apply(partial(_init_nest_weights, head_bias=head_bias), self)
 
     @torch.jit.ignore
@@ -462,6 +486,14 @@ def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
 
     return model
 
+
+@register_model
+def nest_mini_cifar(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
+        num_classes=10, **kwargs)
+    model = _create_nest('nest_mini_cifar', pretrained=pretrained, **model_kwargs)
+    return model
 
 @register_model
 def nest_tiny_cifar(pretrained=False, **kwargs):
