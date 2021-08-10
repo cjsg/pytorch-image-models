@@ -126,8 +126,7 @@ class MultiHeadAttention(nn.Module):
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
 
-        self.qk = nn.Linear(dim, 2*dim, bias=qkv_bias)
-        self.v = nn.Linear(dim, dim, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -138,10 +137,8 @@ class MultiHeadAttention(nn.Module):
         """ 
         B, T, N, C = x.shape
         # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
-        # TODO: change back to qkv
-        v = self.v(x).reshape(B, T, N, self.num_heads, C // self.num_heads).permute(0, 3, 1, 2, 4)
-        qk = self.qk(x).reshape(B, T, N, 2, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
-        q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
+        qkv = self.qk(x).reshape(B, T, N, 3, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
         attn = attn.softmax(dim=-1)
@@ -180,18 +177,16 @@ class TransformerLayer(nn.Module):
 
 
 class ConvPool(nn.Module):
-    def __init__(self, in_channels, out_channels, norm_layer, pad_type=''):
+    def __init__(self, in_channels, out_channels, norm_layer, pad_type='', original=False):
+        # TODO: changed here to original=False
         super().__init__()
-        # TODO: change here
-        # self.conv = nn.Identity()
         self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
-        # self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=True, padding=1)
-        # self.norm = norm_layer(out_channels)
-        # TODO: CHANGE HERE
-        self.pool = nn.MaxPool2d(kernel_size=4, stride=2, padding=1)
-        # self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
-        # self.pool = create_pool2d('max', kernel_size=2, stride=2, padding=0)
-        # self.pool = nn.Identity()
+        if original:
+            self.norm = norm_layer(out_channels)
+            self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
+        else:
+            self.norm = None
+            self.pool = nn.MaxPool2d(kernel_size=4, stride=2, padding=1)
 
     def forward(self, x):
         """
@@ -200,8 +195,8 @@ class ConvPool(nn.Module):
         assert x.shape[-2] % 2 == 0, 'BlockAggregation requires even input spatial dims'
         assert x.shape[-1] % 2 == 0, 'BlockAggregation requires even input spatial dims'
         x = self.conv(x)
-        # Layer norm done over channel dim only
-        # x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        if self.norm is not None:  # Layer norm done over channel dim only
+            x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         x = self.pool(x)
         return x  # (B, C, H//2, W//2)
 
@@ -496,9 +491,17 @@ def nest_mini_cifar(pretrained=False, **kwargs):
     return model
 
 @register_model
+def nest_mini2_cifar(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=2,
+        num_classes=10, **kwargs)
+    model = _create_nest('nest_mini_cifar', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
 def nest_tiny_cifar(pretrained=False, **kwargs):
     model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
         num_classes=10, **kwargs)
     model = _create_nest('nest_tiny_cifar', pretrained=pretrained, **model_kwargs)
     return model
