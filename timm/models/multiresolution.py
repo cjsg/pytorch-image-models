@@ -47,97 +47,6 @@ default_cfgs = {
     'multiresolution': _cfg_cifar()
 }
 
-# class Pooling(nn.Module):
-#     def __init__(self, dim, pooltype):
-#         '''
-#         num_levels: number of scales in the hierarchy
-#         dim: number of dimensions in attention layer
-#         '''
-#         super().__init__()
-#         pooltypes = pooltype.split('-')
-#         layers = []
-#         for name in pooltypes:
-#             if name == 'conv3':
-#                 layers.append(
-#                     # nn.Conv2d(dim, dim, kernel_size=3, stride=2, bias=False, padding=1, groups=dim, bias=False))
-#                     nn.Conv2d(dim, dim, kernel_size=3, stride=1, bias=True, padding=1)) # groups=dim, bias=False))
-#             elif name in {'conv', 'conv2'}:
-#                 layers.append(
-#                     # nn.Conv2d(dim, dim, kernel_size=2, stride=2, bias=False, groups=dim, bias=False))
-#                     nn.Conv2d(dim, dim, kernel_size=2, stride=1, bias=False))  # groups=dim, bias=False))
-#             elif name in {'mp3', 'maxpool3'}:
-#                 layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
-#             elif name in {'maxpool', 'maxpool2', 'mp', 'mp2'}:
-#                 layers.append(nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
-#             elif name in {'ln', 'norm', 'layernorm'}:
-#                 layers.append(nn.LayerNorm(dim))
-#             else:
-#                 raise NotImplementedError(f'pooltype {pooltype} unknown')
-#         self.layers = nn.ModuleList(layers)
-# 
-#     def forward(self, x):
-#         """
-#         x.shape expected to be B C H W
-#         """
-#         for layer in self.layers:
-#             if type(layer) == nn.LayerNorm:
-#                 x = layer(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-#             else:
-#                 x = layer(x)
-#         return x  # B C H W
-
-# class Pooling(nn.Module):
-#     def __init__(self, dim, pooltype):
-#         '''
-#         num_levels: number of scales in the hierarchy
-#         dim: number of dimensions in attention layer
-#         '''
-#         super().__init__()
-#         pooltypes = pooltype.split('-')
-#         self.conv = nn.Conv2d(dim, dim, kernel_size=3, stride=1, bias=True, padding=1)
-#         # self.mxp = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-#         self.mxp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-# 
-#     def forward(self, x, do_conv=True, downscale=True):
-#         """
-#         x.shape expected to be B C H W
-#         """
-#         if do_conv:
-#             x = self.conv(x)
-#         if downscale:
-#             x = self.mxp(x)
-#         return x  # B C H W
-
-
-# class PoolingLayers(nn.Module):
-#     def __init__(self, num_levels, dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
-#         """
-#         num_levels: number of scales in the hierarchy
-#         dim: number of dimensions in attention layer
-#         pooltype: combination of 'conv', 'conv3', 'ln', 'maxpool', 'maxpool3' separated by '-'
-#         """
-#         super().__init__()
-#         self.num_levels = num_levels
-#         self.poolings = nn.ModuleList([Pooling(dim, pooltype) for _ in range(num_levels-1)])  # reverse order: smallest scale first
-# 
-#     def forward(self, x, level=0, do_conv=True, downscale=True):
-#         if level < (self.num_levels-1):
-#             # _logger.info(f'level: {level}, num_levels: {self.num_levels}, len(poolings): {len(self.poolings)}, i: {self.num_levels-1-level}')
-#             blocked_img = (len(x.shape) == 5)
-#             if blocked_img:
-#                 B, T, H, W, C = x.shape
-#                 Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
-#                 x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
-# 
-#             x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
-#             for i in range(self.num_levels-1-level):
-#                 x = self.poolings[i](x, do_conv, downscale)
-#             # x = self.poolings[self.num_levels-2-level](x, do_conv, downscale)
-#             x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
-# 
-#             if blocked_img:
-#                 x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
-#         return x
 
 class PoolingLayers(nn.Module):
     def __init__(self, num_levels, dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
@@ -148,34 +57,22 @@ class PoolingLayers(nn.Module):
         """
         super().__init__()
         self.num_levels = num_levels
-        self.convs = nn.ModuleList([
-            # nn.Conv2d(dim, dim, kernel_size=3, stride=1, dilation=(2**i), padding='same')
-            nn.Sequential(
-                nn.Conv2d(dim, dim, kernel_size=3, stride=1, dilation=(2**i), padding='same'),
-                nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
-            )
-                for i in range(num_levels-1)])
         self.pools = nn.ModuleList([
-            # TODO: maybe change here
-            # nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            # TODO: maybe change kernel_size to 3 or 4 and/or add grouped convs
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
                 for _ in range(num_levels-1)])
 
-    def forward(self, x, level=0, do_conv=True, downscale=True):
+    def forward(self, x, level=0):
         if level < (self.num_levels-1):
             blocked_img = (len(x.shape) == 5)
             if blocked_img:
                 B, T, H, W, C = x.shape
-                Th = Tw = int(math.sqrt(T))  # grid-hight/width (assumes original image was square)
+                Th = Tw = int(math.sqrt(T))  # grid-height/width (assumes original image was square)
                 x = ra(x, 'B (Th Tw) H W C -> B (Th H) (Tw W) C', Th=Th, Tw=Tw)
 
             x = x.permute(0, 3, 1, 2)  # B H W C -> B C H W
-            if do_conv:
-                x = self.convs[self.num_levels-2-level](x)
-            if downscale:
-                for i in range(self.num_levels-1-level):
-                    x = self.pools[i](x)
-                    # x = x[:,:,::2,::2]
+            for i in range(self.num_levels-1-level):  # levels are in reverse order; 0 -> smallest scale
+                x = self.pools[i](x)
             x = x.permute(0, 2, 3, 1)  # B C h w -> B h w C
 
             if blocked_img:
@@ -212,8 +109,7 @@ class ScaledAttention(nn.Module):
             patch is a group of pixels that has been downscaled/pooled to the current level/scale.
             K denotes the number of heads
         """ 
-        # x = self.poolings(x, self.level, do_conv=True, downscale=False)  # conv applied in TransformerLevel
-        z = self.poolings(x, self.level, do_conv=False, downscale=True)
+        z = self.poolings(x, self.level)
         B, T, H, W, C = x.shape  # B T (h k) (w l) C
         B, T, h, w, C = z.shape
 
@@ -253,7 +149,6 @@ class TransformerLayer(nn.Module):
                  attn_layer=ScaledAttention):
         super().__init__()
         self.level = level
-        self.poolings = poolings  # B C H W -> B C h w
         self.attn = attn_layer(level, poolings, dim, num_heads=num_heads, qkv_bias=qkv_bias,
                                attn_drop=attn_drop, proj_drop=drop, norm_layer=norm_layer)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -274,17 +169,25 @@ class TransformerLevel(nn.Module):
     """ Single hierarchical level of TopDown
     """
     def __init__(
-            self, level, depth, poolings, embed_dim, num_heads,
+            self, level, dilation, initial_level, depth, poolings, embed_dim, num_heads,
             mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rates=[],
             act_layer=None, norm_layer=None, attn_layer=None, pad_type=''):
         super().__init__()
 
         self.level = level
-        self.poolings = poolings
+
+        # Create the first conv layer
+        if initial_level:
+            self.conv = nn.Identity()
+        else:
+            self.conv = nn.Sequential(  # TODO: test other operations. This one is the one from NesT
+                nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=1, dilation=dilation, padding='same'),
+                nn.MaxPool2d(kernel_size=3, stride=1, padding=1))
 
         # Transformer encoder
         if len(drop_path_rates):
             assert len(drop_path_rates) == depth, 'Must provide as many drop path rates as there are transformer layers'
+
         self.transformer_layers = nn.Sequential(*[
             TransformerLayer(
                 level=level, poolings=poolings, dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio,
@@ -299,12 +202,12 @@ class TransformerLevel(nn.Module):
         B, H, W, C = x.shape
         Th = Tw = int(2 ** self.level)
 
+        x = self.conv(x.permute(0,3,1,2)).permute(0,2,3,1)  # HWC -> HCW -> HWC
+
         # blockify
         x = ra(x, 'B (Th h) (Tw w) C -> B (Th Tw) h w C', Th=Th, Tw=Tw)
-        y = ra(x, 'B T h w C -> B T (h w) C')
 
         # layers
-        x = self.poolings(x, self.level, do_conv=True, downscale=False)  # apply conv
         x = self.transformer_layers(x)  # (B, T, H', W', C)
 
         # deblockify
@@ -383,20 +286,35 @@ class TopDown(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, img_size // patch_size, img_size // patch_size, embed_dim))
         self.poolings = PoolingLayers(num_levels, embed_dim)
 
-        # Build up each hierarchical level
-        downlevels, uplevels = [], []  # TODO: test: downlevels = uplevels
+        # Build downlevels
+        downlevels, uplevels = [], []
         dp_rates = [x.tolist() for x in torch.linspace(0, drop_path_rate, sum(depths)).split(depths)]
-        curr_stride = 1
-        for l in range(num_levels):
-            args = [l, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio, qkv_bias, drop_rate,
-                    attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer, pad_type]
-            if not no_downlevels:
-                downlevels.append(TransformerLevel(*args))
-            uplevels.append(TransformerLevel(*args))
-            self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'levels.{l}')]
-            curr_stride *= 2
-        uplevels.reverse()
+        # curr_stride = 1
+        initial_level = True
+        if not no_downlevels:
+            for l in range(num_levels):
+                dilation = int(2**(num_levels-l-1))
+                downlevels.append(TransformerLevel(
+                    l, dilation, initial_level, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio,
+                    qkv_bias, drop_rate, attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer,
+                    pad_type))
+                initial_level = False
+                # self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'downlevels.{l}')]
+                # curr_stride *= 2
         self.downlevels = nn.Identity() if no_downlevels else nn.Sequential(*downlevels)
+
+        # Build uplevels
+        num_uplevels = num_levels if no_downlevels else num_levels-1  # do not duplicate lowest scale
+        for l in range(num_uplevels):
+            dilation = int(2**(num_uplevels-l-1))  # -1 compared to downlevels
+            uplevels.append(TransformerLevel(
+                l, dilation, initial_level, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio,
+                qkv_bias, drop_rate, attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer,
+                pad_type))
+            initial_level = False
+            # self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'uplevels.{l}')]
+            # curr_stride *= 2
+        uplevels.reverse()
         self.uplevels = nn.Sequential(*uplevels)
 
         # Final normalization layer
@@ -435,8 +353,7 @@ class TopDown(nn.Module):
         x = x + self.pos_embed
         x = self.downlevels(x)  # B H W C
         x = self.uplevels(x)  # B H W C
-        # TODO: check here if we should use do_conv
-        x = self.poolings(x, level=0, do_conv=False, downscale=True)  # B H W C
+        x = self.poolings(x, level=0)  # B H W C
         x = self.norm(x)  # TODO: test exchanging this and previous lines
         return x.permute(0,3,1,2)  # -> B C H W
 
@@ -522,7 +439,15 @@ def multiresolution(pretrained=False, **kwargs):
     return model
 
 @register_model
-def multiresolution_nest(pretrained=False, **kwargs):
+def multiresolution_tiny(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=2,
+        num_classes=10, **kwargs)
+    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def multiresolution_mini_nest(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
         num_classes=10, no_downlevels=True, **kwargs)
