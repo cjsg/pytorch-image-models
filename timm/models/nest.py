@@ -237,25 +237,24 @@ class NestLevel(nn.Module):
     def __init__(
             self, num_blocks, block_size, seq_length, num_heads, depth, embed_dim, prev_embed_dim=None,
             mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rates=[],
-            norm_layer=None, act_layer=None, attn_layer=None, pad_type=''):
+            norm_layer=None, act_layer=None, attn_layer=None, pad_type='', original=False):
         super().__init__()
         self.block_size = block_size
-
-        if prev_embed_dim is not None:
+        if original:
             self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
-            self.has_pos_embed = False
-        else:
-            self.pool = nn.Identity()
-            self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
             self.has_pos_embed = True
-
-        # self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
-        # self.has_pos_embed = True
-        # if prev_embed_dim is not None:
-        #     self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
-        # else:
-        #     self.pool = nn.Identity()
-
+            if prev_embed_dim is not None:
+                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+            else:
+                self.pool = nn.Identity()
+        else:
+            if prev_embed_dim is not None:
+                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+                self.has_pos_embed = False
+            else:
+                self.pool = nn.Identity()
+                self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
+                self.has_pos_embed = True
 
         # Transformer encoder
         if len(drop_path_rates):
