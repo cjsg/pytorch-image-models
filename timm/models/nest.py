@@ -137,7 +137,7 @@ class MultiHeadAttention(nn.Module):
         """ 
         B, T, N, C = x.shape
         # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
-        qkv = self.qk(x).reshape(B, T, N, 3, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
+        qkv = self.qkv(x).reshape(B, T, N, 3, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
@@ -177,7 +177,7 @@ class TransformerLayer(nn.Module):
 
 
 class ConvPool(nn.Module):
-    def __init__(self, in_channels, out_channels, norm_layer, pad_type='', original=False):
+    def __init__(self, in_channels, out_channels, norm_layer, pad_type='', original=True):
         # TODO: changed here to original=False
         super().__init__()
         self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
@@ -237,19 +237,19 @@ class NestLevel(nn.Module):
     def __init__(
             self, num_blocks, block_size, seq_length, num_heads, depth, embed_dim, prev_embed_dim=None,
             mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rates=[],
-            norm_layer=None, act_layer=None, attn_layer=None, pad_type='', original=False):
+            norm_layer=None, act_layer=None, attn_layer=None, pad_type='', original=True):
         super().__init__()
         self.block_size = block_size
         if original:
-            self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
             self.has_pos_embed = True
             if prev_embed_dim is not None:
-                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type, original=original)
             else:
                 self.pool = nn.Identity()
         else:
             if prev_embed_dim is not None:
-                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+                self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type, original=original)
                 self.has_pos_embed = False
             else:
                 self.pool = nn.Identity()
@@ -290,7 +290,7 @@ class Nest(nn.Module):
     def __init__(self, img_size=224, in_chans=3, patch_size=4, num_levels=3, embed_dims=(128, 256, 512),
                  num_heads=(4, 8, 16), depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.5, norm_layer=None, act_layer=None,
-                 attn_layer=None, pad_type='', weight_init='', global_pool='avg'):
+                 attn_layer=None, pad_type='', weight_init='', global_pool='avg', original=True):
         """
         Args:
             img_size (int, tuple): input image size
@@ -311,6 +311,7 @@ class Nest(nn.Module):
             pad_type: str: Type of padding to use '' for PyTorch symmetric, 'same' for TF SAME
             weight_init: (str): weight init scheme
             global_pool: (str): type of pooling operation to apply to final feature map
+            original (bol): use original nest implimentation if True; otherwise use CJ's improvements
 
         Notes:
             - Default values follow NesT-B from the original Jax code.
@@ -369,7 +370,7 @@ class Nest(nn.Module):
             levels.append(NestLevel(
                 self.num_blocks[i], self.block_size, self.seq_length, num_heads[i], depths[i], dim, prev_dim,
                 mlp_ratio, qkv_bias, drop_rate, attn_drop_rate, dp_rates[i], norm_layer, act_layer,
-                attn_layer, pad_type=pad_type))
+                attn_layer, pad_type=pad_type, original=original))
             self.feature_info += [dict(num_chs=dim, reduction=curr_stride, module=f'levels.{i}')]
             prev_dim = dim
             curr_stride *= 2
@@ -485,7 +486,7 @@ def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
 def nest_mini_cifar(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
-        num_classes=10, **kwargs)
+        num_classes=10, original=False, **kwargs)
     model = _create_nest('nest_mini_cifar', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -493,7 +494,7 @@ def nest_mini_cifar(pretrained=False, **kwargs):
 def nest_mini2_cifar(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=2,
-        num_classes=10, **kwargs)
+        num_classes=10, original=False, **kwargs)
     model = _create_nest('nest_mini_cifar', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -501,7 +502,7 @@ def nest_mini2_cifar(pretrained=False, **kwargs):
 def nest_tiny_cifar(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
-        num_classes=10, **kwargs)
+        num_classes=10, original=False, **kwargs)
     model = _create_nest('nest_tiny_cifar', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -510,7 +511,7 @@ def jx_nest_tiny_cifar(pretrained=False, **kwargs):
     kwargs['pad_type'] = 'same'
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
-        num_classes=10, **kwargs)
+        num_classes=10, original=False, **kwargs)
     model = _create_nest('nest_tiny_cifar', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -518,7 +519,7 @@ def jx_nest_tiny_cifar(pretrained=False, **kwargs):
 def nest_tiny_cifar_sharekv(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
-        num_classes=10, attn_layer=MultiQueryAttention, **kwargs)
+        num_classes=10, attn_layer=MultiQueryAttention, original=False, **kwargs)
     model = _create_nest('nest_tiny_cifar_sharekv', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -527,7 +528,7 @@ def jx_nest_tiny_cifar_sharekv(pretrained=False, **kwargs):
     kwargs['pad_type'] = 'same'
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=4, embed_dims=192, num_heads=3, depths=3,
-        num_classes=10, attn_layer=MultiQueryAttention, **kwargs)
+        num_classes=10, attn_layer=MultiQueryAttention, original=False, **kwargs)
     model = _create_nest('nest_tiny_cifar_sharekv', pretrained=pretrained, **model_kwargs)
     return model
 
