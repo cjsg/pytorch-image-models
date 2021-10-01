@@ -49,11 +49,11 @@ default_cfgs = {
 
 
 class PoolingLayers(nn.Module):
-    def __init__(self, num_levels, dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
+    def __init__(self, num_levels):  # , dim, pooltype='maxpool3'):  # pooltype='conv3-ln-maxpool3'):
         """
         num_levels: number of scales in the hierarchy
-        dim: number of dimensions in attention layer
-        pooltype: combination of 'conv', 'conv3', 'ln', 'maxpool', 'maxpool3' separated by '-'
+        # dim: number of dimensions in attention layer
+        # pooltype: combination of 'conv', 'conv3', 'ln', 'maxpool', 'maxpool3' separated by '-'
         """
         super().__init__()
         self.num_levels = num_levels
@@ -93,7 +93,7 @@ class ScaledAttention(nn.Module):
         self.scale = self.head_dim ** -0.5
 
         self.level = level  # level of this attention module (0 = largest scale)
-        self.poolings = poolings  # B C H W -> B C h w
+        self.poolings = [poolings]  # B C H W -> B C h w  # uses brackets to avoid being detected as an nn.Module
         self.norm1 = norm_layer(dim)  # in NesT, this is self.norm1 in TransformerLayer
         self.qk = nn.Linear(dim, 2*dim, bias=qkv_bias)
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
@@ -109,7 +109,7 @@ class ScaledAttention(nn.Module):
             patch is a group of pixels that has been downscaled/pooled to the current level/scale.
             K denotes the number of heads
         """ 
-        z = self.poolings(x, self.level)
+        z = self.poolings[0](x, self.level)
         B, T, H, W, C = x.shape  # B T (h k) (w l) C
         B, T, h, w, C = z.shape
 
@@ -169,7 +169,7 @@ class TransformerLevel(nn.Module):
     """ Single hierarchical level of TopDown
     """
     def __init__(
-            self, level, dilation, initial_level, depth, poolings, embed_dim, num_heads,
+            self, level, dilation, depth, poolings, embed_dim, prev_embed_dim, num_heads,
             mlp_ratio=4., qkv_bias=True, drop_rate=0., attn_drop_rate=0., drop_path_rates=[],
             act_layer=None, norm_layer=None, attn_layer=None, pad_type=''):
         super().__init__()
@@ -177,11 +177,11 @@ class TransformerLevel(nn.Module):
         self.level = level
 
         # Create the first conv layer
-        if initial_level:
+        if prev_embed_dim is None:  # initial level
             self.conv = nn.Identity()
         else:
             self.conv = nn.Sequential(  # TODO: test other operations. This one is the one from NesT
-                nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=1, dilation=dilation, padding='same'),
+                nn.Conv2d(prev_embed_dim, embed_dim, kernel_size=3, stride=1, dilation=dilation, padding='same'),
                 nn.MaxPool2d(kernel_size=3, stride=1, padding=1))
 
         # Transformer encoder
@@ -216,19 +216,20 @@ class TransformerLevel(nn.Module):
 
 
 class TopDown(nn.Module):
-    def __init__(self, img_size=32, in_chans=3, patch_size=1, num_levels=3, embed_dim=192,
+    def __init__(self, img_size=32, in_chans=3, patch_size=1, num_levels=3, embed_dims=(192, 192, 192),
                  num_heads=(3, 3, 3), depths=(1, 1, 1), num_classes=10, mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.5, norm_layer=None, act_layer=None,
-                 attn_layer=None, pad_type='', weight_init='', global_pool='avg', no_downlevels=False):
+                 attn_layer=None, pad_type='', weight_init='', global_pool='avg', no_downlevels=False,
+                 no_uplevels=False):
         """
         Args:
             img_size (int, tuple): input image size
             in_chans (int): number of input channels
             patch_size (int): patch size (S in paper)
             num_levels (int): number of block hierarchies (T_d in the paper)
-            embed_dim (int): embedding dimensions of each level (must be int!)
-            num_heads (int, tuple): number of attention heads for each level
-            depths (int, tuple): number of transformer layers for each level
+            embed_dims (int, tuple): embedding dimensions of each level (from largest to smallest scale)
+            num_heads (int, tuple): number of attention heads for each level (from largest to smallest scale)
+            depths (int, tuple): number of transformer layers for each level (from largest to smallest scale)
             num_classes (int): number of classes for classification head
             mlp_ratio (int): ratio of mlp hidden dim to embedding dim for MLP of transformer layers
             qkv_bias (bool): enable bias for qkv if True
@@ -241,12 +242,15 @@ class TopDown(nn.Module):
             weight_init: (str): weight init scheme
             global_pool: (str): type of pooling operation to apply to final feature map
             no_downlevels (bool): use only up-levels, i.e., feed-forward arch
+            no_uplevels (bool): use only down-levels, i.e., top-down arch only
 
         Notes:
-            - `num_heads`, `depths` should be ints or tuples with length `num_levels`.
-            - `embed_dim` must be an int (contrary to NesT)
+            - `num_heads`, `depths`, `embed_dims` should be ints or tuples with length `num_levels`,
+              with numbers going from largest to smallest scale
         """
         super().__init__()
+        assert not (no_downlevels and no_uplevels), (
+            "`no_downlevels` and `no_uplevels` cannot be simultaneously True")
 
         for param_name in ['num_heads', 'depths']:
             param_value = locals()[param_name]
@@ -255,8 +259,8 @@ class TopDown(nn.Module):
 
         num_heads = to_ntuple(num_levels)(num_heads)
         depths = to_ntuple(num_levels)(depths)
+        embed_dims = to_ntuple(num_levels)(embed_dims)
         self.num_classes = num_classes
-        self.num_features = embed_dim
         self.feature_info = []
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
         act_layer = act_layer or nn.GELU
@@ -278,49 +282,56 @@ class TopDown(nn.Module):
         # Hint: (img_size // patch_size) gives number of patches along edge of image. sqrt(num_blocks) is the
         # number of blocks along edge of image
         block_size = int((img_size // patch_size) // math.sqrt(num_blocks[-1]))
-        
+
         # Patch embedding
+        initial_dim = embed_dims[0] if (not no_downlevels) else embed_dims[-1]
         self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, flatten=False)
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=initial_dim, flatten=False)
 
-        self.pos_embed = nn.Parameter(torch.zeros(1, img_size // patch_size, img_size // patch_size, embed_dim))
-        self.poolings = PoolingLayers(num_levels, embed_dim)
+        self.pos_embed = nn.Parameter(torch.zeros(1, img_size // patch_size, img_size // patch_size, initial_dim))
+        self.poolings = PoolingLayers(num_levels)
 
-        # Build downlevels
+        # Build levels (downlevels = top-down part; uplevels = bottom-up part)
         downlevels, uplevels = [], []
         dp_rates = [x.tolist() for x in torch.linspace(0, drop_path_rate, sum(depths)).split(depths)]
         # curr_stride = 1
-        initial_level = True
-        if not no_downlevels:
+        prev_embed_dim = None
+
+        # Build downlevels
+        if not no_downlevels:  # downlevels = top-down part
             for l in range(num_levels):
+                embed_dim = embed_dims[l]
                 dilation = int(2**(num_levels-l-1))
                 downlevels.append(TransformerLevel(
-                    l, dilation, initial_level, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio,
+                    l, dilation, depths[l], self.poolings, embed_dim, prev_embed_dim, num_heads[l], mlp_ratio,
                     qkv_bias, drop_rate, attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer,
                     pad_type))
-                initial_level = False
+                prev_embed_dim = embed_dim
                 # self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'downlevels.{l}')]
                 # curr_stride *= 2
         self.downlevels = nn.Identity() if no_downlevels else nn.Sequential(*downlevels)
 
         # Build uplevels
         num_uplevels = num_levels if no_downlevels else num_levels-1  # do not duplicate lowest scale
-        for l in range(num_uplevels):
-            dilation = int(2**(num_uplevels-l-1))  # -1 compared to downlevels
-            uplevels.append(TransformerLevel(
-                l, dilation, initial_level, depths[l], self.poolings, embed_dim, num_heads[l], mlp_ratio,
-                qkv_bias, drop_rate, attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer,
-                pad_type))
-            initial_level = False
-            # self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'uplevels.{l}')]
-            # curr_stride *= 2
-        uplevels.reverse()
-        self.uplevels = nn.Sequential(*uplevels)
+        if not no_uplevels:  # uplevels = bottom-up part
+            for l in reversed(range(num_uplevels)):
+                dilation = int(2**(num_uplevels-l-1))  # -1 compared to downlevels (if downlevels == True)
+                embed_dim = embed_dims[l]
+                uplevels.append(TransformerLevel(
+                    l, dilation, depths[l], self.poolings, embed_dim, prev_embed_dim, num_heads[l], mlp_ratio,
+                    qkv_bias, drop_rate, attn_drop_rate, dp_rates[l], act_layer, norm_layer, attn_layer,
+                    pad_type))
+                prev_embed_dim = embed_dim
+                # self.feature_info += [dict(num_chs=embed_dim, reduction=curr_stride, module=f'uplevels.{l}')]
+                # curr_stride *= 2
+        self.uplevels = nn.Identity() if no_uplevels else nn.Sequential(*uplevels)
+
 
         # Final normalization layer
-        self.norm = norm_layer(embed_dim)
+        self.norm = norm_layer(prev_embed_dim)
 
         # Classifier
+        self.num_features = prev_embed_dim
         self.global_pool, self.head = create_classifier(self.num_features, self.num_classes, pool_type=global_pool)
 
         self.init_weights(weight_init)
@@ -433,7 +444,7 @@ def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
 @register_model
 def multiresolution(pretrained=False, **kwargs):
     model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
         num_classes=10, **kwargs)
     model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
@@ -441,15 +452,32 @@ def multiresolution(pretrained=False, **kwargs):
 @register_model
 def multiresolution_tiny(pretrained=False, **kwargs):
     model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=2,
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=2,
         num_classes=10, **kwargs)
+    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def mr_test(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=(72, 144, 216), num_heads=3, depths=2,
+        num_classes=10, **kwargs)
+    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+
+@register_model
+def mr_topdown_tiny(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
+        num_classes=10, no_uplevels=True, **kwargs)
     model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
 
 @register_model
 def multiresolution_mini_nest(pretrained=False, **kwargs):
     model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dim=192, num_heads=3, depths=1,
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
         num_classes=10, no_downlevels=True, **kwargs)
     model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
