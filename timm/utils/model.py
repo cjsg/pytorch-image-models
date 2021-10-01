@@ -14,7 +14,10 @@ def unwrap_model(model):
 
 
 def get_state_dict(model, unwrap_fn=unwrap_model):
-    return unwrap_fn(model).state_dict()
+    unwrapped_model = unwrap_fn(model)
+    if getattr(unwrapped_model, 'is_model_wrapper', False):
+        unwrapped_model = unwrapped_model.model
+    return unwrapped_model.state_dict()
 
 
 def avg_sq_ch_mean(model, input, output): 
@@ -89,4 +92,3 @@ def extract_spp_stats(model,
     hook = ActivationStatsHook(model, hook_fn_locs=hook_fn_locs, hook_fns=hook_fns)
     _ = model(x)
     return hook.stats
-    

@@ -45,6 +45,7 @@ def load_state_dict(checkpoint_path, use_ema=False):
 
 
 def load_checkpoint(model, checkpoint_path, use_ema=False, strict=True):
+    model = model.model if getattr(model, 'is_model_wrapper', False) else model
     if os.path.splitext(checkpoint_path)[-1].lower() in ('.npz', '.npy'):
         # numpy checkpoint, try to load via model specific load_pretrained fn
         if hasattr(model, 'load_pretrained'):
@@ -60,6 +61,7 @@ def resume_checkpoint(model, checkpoint_path, optimizer=None, loss_scaler=None, 
     resume_epoch = None
     if os.path.isfile(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        model = model.model if getattr(model, 'is_model_wrapper', False) else model
         if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
             if log_info:
                 _logger.info('Restoring model state from checkpoint...')
@@ -107,7 +109,7 @@ def load_custom_pretrained(model, default_cfg=None, load_fn=None, progress=False
     `hub_dir` is the directory returned by :func:`~torch.hub.get_dir`.
 
     Args:
-        model: The instantiated model to load weights into
+        model: The instantiated model (or model wrapper) to load weights into
         default_cfg (dict): Default pretrained model cfg
         load_fn: An external stand alone fn that loads weights into provided model, otherwise a fn named
             'laod_pretrained' on the model will be called if it exists
@@ -117,6 +119,7 @@ def load_custom_pretrained(model, default_cfg=None, load_fn=None, progress=False
             digits of the SHA256 hash of the contents of the file. The hash is used to
             ensure unique names and to verify the contents of the file. Default: False
     """
+    model = model.model if getattr(model, 'is_model_wrapper', False) else model
     default_cfg = default_cfg or getattr(model, 'default_cfg', None) or {}
     pretrained_url = default_cfg.get('url', None)
     if not pretrained_url:
@@ -170,6 +173,7 @@ def load_pretrained(model, default_cfg=None, num_classes=1000, in_chans=3, filte
         progress (bool): enable progress bar for weight download
 
     """
+    model = model.model if getattr(model, 'is_model_wrapper', False) else model
     default_cfg = default_cfg or getattr(model, 'default_cfg', None) or {}
     pretrained_url = default_cfg.get('url', None)
     hf_hub_id = default_cfg.get('hf_hub', None)
@@ -230,6 +234,8 @@ def load_pretrained(model, default_cfg=None, num_classes=1000, in_chans=3, filte
 def extract_layer(model, layer):
     layer = layer.split('.')
     module = model
+    if getattr(model, 'is_wrapper_model', False):
+        module = model.model
     if hasattr(model, 'module') and layer[0] != 'module':
         module = model.module
     if not hasattr(model, 'module') and layer[0] == 'module':
@@ -444,6 +450,8 @@ def build_model_with_cfg(
     # Build the model
     model = model_cls(**kwargs) if model_cfg is None else model_cls(cfg=model_cfg, **kwargs)
     model.default_cfg = default_cfg
+    # NB: most of the default_cfg entries are not used when building the model. They are used
+    # later, f.ex., `mean` and `std` are used when creating the datasets
     
     if pruned:
         model = adapt_model_from_file(model, variant)

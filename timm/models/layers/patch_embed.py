@@ -28,7 +28,8 @@ class PatchEmbed(nn.Module):
             assert flatten, "Only use `norm_layer` if `flatten` is True"
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.norm = norm_layer(embed_dim) if norm_layer else None
+        # self.norm = norm_layer(embed_dim) if norm_layer else None
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -37,5 +38,5 @@ class PatchEmbed(nn.Module):
         x = self.proj(x)
         if self.flatten:
             x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
-            x = self.norm(x)
+        x = self.norm(x)
         return x

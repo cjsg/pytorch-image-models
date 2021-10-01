@@ -34,11 +34,14 @@ class CheckpointSaver:
             max_history=10,
             unwrap_fn=unwrap_model):
 
+        if getattr(model, 'is_model_wrapper', False):
+            model = model.model
+
         # objects to save state_dicts of
-        self.model = model
+        self.model = model  # without the model wrapper
         self.optimizer = optimizer
         self.args = args
-        self.model_ema = model_ema
+        self.model_ema = model_ema  # with the model wrapper included; filtered out when getting state_dict
         self.amp_scaler = amp_scaler
 
         # state
