@@ -1,11 +1,12 @@
 """ Scheduler Factory
-Hacked together by / Copyright 2020 Ross Wightman
+Hacked together by / Copyright 2021 Ross Wightman
 """
 from .cosine_lr import CosineLRScheduler
-from .tanh_lr import TanhLRScheduler
-from .step_lr import StepLRScheduler
-from .plateau_lr import PlateauLRScheduler
 from .multistep_lr import MultiStepLRScheduler
+from .plateau_lr import PlateauLRScheduler
+from .poly_lr import PolyLRScheduler
+from .step_lr import StepLRScheduler
+from .tanh_lr import TanhLRScheduler
 
 
 def create_scheduler(args, optimizer):
@@ -21,40 +22,43 @@ def create_scheduler(args, optimizer):
             noise_range = lr_noise * num_epochs
     else:
         noise_range = None
+    noise_args = dict(
+        noise_range_t=noise_range,
+        noise_pct=getattr(args, 'lr_noise_pct', 0.67),
+        noise_std=getattr(args, 'lr_noise_std', 1.),
+        noise_seed=getattr(args, 'seed', 42),
+    )
+    cycle_args = dict(
+        cycle_mul=getattr(args, 'lr_cycle_mul', 1.),
+        cycle_decay=getattr(args, 'lr_cycle_decay', 0.1),
+        cycle_limit=getattr(args, 'lr_cycle_limit', 1),
+    )
 
     lr_scheduler = None
     if args.sched == 'cosine':
         lr_scheduler = CosineLRScheduler(
             optimizer,
             t_initial=num_epochs,
-            t_mul=getattr(args, 'lr_cycle_mul', 1.),
             lr_min=args.min_lr,
-            decay_rate=args.decay_rate,
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
-            cycle_limit=getattr(args, 'lr_cycle_limit', 1),
-            t_in_epochs=True,
-            noise_range_t=noise_range,
-            noise_pct=getattr(args, 'lr_noise_pct', 0.67),
-            noise_std=getattr(args, 'lr_noise_std', 1.),
-            noise_seed=getattr(args, 'seed', 42),
+            k_decay=getattr(args, 'lr_k_decay', 1.0),
+            **cycle_args,
+            **noise_args,
         )
         num_epochs = lr_scheduler.get_cycle_length() + args.cooldown_epochs
     elif args.sched == 'tanh':
         lr_scheduler = TanhLRScheduler(
             optimizer,
             t_initial=num_epochs,
-            t_mul=getattr(args, 'lr_cycle_mul', 1.),
-            decay_rate=args.decay_rate,
+            # t_mul=getattr(args, 'lr_cycle_mul', 1.),
+            # decay_rate=args.decay_rate,  # subsumed by lr_cycle_decay
             lr_min=args.min_lr,
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
-            cycle_limit=getattr(args, 'lr_cycle_limit', 1),
             t_in_epochs=True,
-            noise_range_t=noise_range,
-            noise_pct=getattr(args, 'lr_noise_pct', 0.67),
-            noise_std=getattr(args, 'lr_noise_std', 1.),
-            noise_seed=getattr(args, 'seed', 42),
+            **cycle_args,
+            **noise_args,
         )
         num_epochs = lr_scheduler.get_cycle_length() + args.cooldown_epochs
     elif args.sched == 'step':
@@ -64,10 +68,7 @@ def create_scheduler(args, optimizer):
             decay_rate=args.decay_rate,
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
-            noise_range_t=noise_range,
-            noise_pct=getattr(args, 'lr_noise_pct', 0.67),
-            noise_std=getattr(args, 'lr_noise_std', 1.),
-            noise_seed=getattr(args, 'seed', 42),
+            **noise_args,
         )
     elif args.sched == 'multistep':
         lr_scheduler = MultiStepLRScheduler(
@@ -76,10 +77,7 @@ def create_scheduler(args, optimizer):
             decay_rate=args.decay_rate,
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
-            noise_range_t=noise_range,
-            noise_pct=getattr(args, 'lr_noise_pct', 0.67),
-            noise_std=getattr(args, 'lr_noise_std', 1.),
-            noise_seed=getattr(args, 'seed', 42),
+            **noise_args,
         )
     elif args.sched == 'plateau':
         mode = 'min' if 'loss' in getattr(args, 'eval_metric', '') else 'max'
@@ -92,12 +90,25 @@ def create_scheduler(args, optimizer):
             warmup_lr_init=args.warmup_lr,
             warmup_t=args.warmup_epochs,
             cooldown_t=0,
-            noise_range_t=noise_range,
-            noise_pct=getattr(args, 'lr_noise_pct', 0.67),
-            noise_std=getattr(args, 'lr_noise_std', 1.),
-            noise_seed=getattr(args, 'seed', 42),
+            **noise_args,
         )
+<<<<<<< HEAD
     else:
         raise ValueError(f'Unknown scheduler {args.sched}')
+=======
+    elif args.sched == 'poly':
+        lr_scheduler = PolyLRScheduler(
+            optimizer,
+            power=args.decay_rate,  # overloading 'decay_rate' as polynomial power
+            t_initial=num_epochs,
+            lr_min=args.min_lr,
+            warmup_lr_init=args.warmup_lr,
+            warmup_t=args.warmup_epochs,
+            k_decay=getattr(args, 'lr_k_decay', 1.0),
+            **cycle_args,
+            **noise_args,
+        )
+        num_epochs = lr_scheduler.get_cycle_length() + args.cooldown_epochs
+>>>>>>> b5bf4dce98a09cb25a274f360c08f23998faedb8
 
     return lr_scheduler, num_epochs

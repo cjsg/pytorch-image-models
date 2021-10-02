@@ -1,8 +1,10 @@
+from .beit import *
 from .byoanet import *
 from .byobnet import *
 from .cait import *
 from .coat import *
 from .convit import *
+from .crossvit import *
 from .cspnet import *
 from .densenet import *
 from .dla import *
@@ -38,6 +40,7 @@ from .swin_transformer import *
 from .tnt import *
 from .topdown import *
 from .tresnet import *
+from .twins import *
 from .vgg import *
 from .visformer import *
 from .vision_transformer import *
@@ -47,7 +50,6 @@ from .vovnet import *
 from .xception import *
 from .xception_aligned import *
 from .xcit import *
-from .twins import *
 
 from .factory import create_model, split_model_name, safe_model_name
 from .helpers import load_checkpoint, resume_checkpoint, model_parameters
