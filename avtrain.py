@@ -412,7 +412,11 @@ def main():
         model.is_model_wrapper = True
         data_config['mean'] = tuple([0.] * len(data_config['mean']))
         data_config['std'] = tuple([1.] * len(data_config['std']))
-        _logger.info('BEWARE: Interpolation is not part of the model arch.  Adjust the attack-size accordingly.')
+        if args.local_rank == 0:
+            _logger.info(
+                'BEWARE: Interpolation is not part of the model arch. '
+                'If the image gets re-scaled before being passed to the model, '
+                'you may want to rescale the attack size accordingly.')
 
     # setup augmentation batch splits for contrastive loss or split bn
     num_aug_splits = 0
