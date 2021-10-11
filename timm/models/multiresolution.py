@@ -429,7 +429,7 @@ def _init_weights(module: nn.Module, name: str = '', head_bias: float = 0.):
 #     return state_dict
 
 
-def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
+def _create_mr(variant, pretrained=False, default_cfg=None, **kwargs):
     default_cfg = default_cfg or default_cfgs[variant]
     model = build_model_with_cfg(
         TopDown, variant, pretrained,
@@ -446,7 +446,7 @@ def multiresolution(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
         num_classes=10, **kwargs)
-    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
 
 @register_model
@@ -454,7 +454,31 @@ def multiresolution_tiny(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=2,
         num_classes=10, **kwargs)
-    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def mr_topdown_tiny(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
+        num_classes=10, no_uplevels=True, **kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def mr_bottomup_mini(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
+        num_classes=10, no_downlevels=True, **kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def mr_bottomup_tiny(pretrained=False, **kwargs):
+    model_kwargs = dict(
+        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
+        num_classes=10, no_downlevels=True, **kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
 
 @register_model
@@ -462,22 +486,5 @@ def mr_test(pretrained=False, **kwargs):
     model_kwargs = dict(
         img_size=32, patch_size=1, num_levels=3, embed_dims=(72, 144, 216), num_heads=3, depths=2,
         num_classes=10, **kwargs)
-    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
-def mr_topdown_tiny(pretrained=False, **kwargs):
-    model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=4,
-        num_classes=10, no_uplevels=True, **kwargs)
-    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def multiresolution_mini_nest(pretrained=False, **kwargs):
-    model_kwargs = dict(
-        img_size=32, patch_size=1, num_levels=3, embed_dims=192, num_heads=3, depths=1,
-        num_classes=10, no_downlevels=True, **kwargs)
-    model = _create_nest('multiresolution', pretrained=pretrained, **model_kwargs)
+    model = _create_mr('multiresolution', pretrained=pretrained, **model_kwargs)
     return model
