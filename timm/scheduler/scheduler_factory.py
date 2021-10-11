@@ -92,10 +92,6 @@ def create_scheduler(args, optimizer):
             cooldown_t=0,
             **noise_args,
         )
-<<<<<<< HEAD
-    else:
-        raise ValueError(f'Unknown scheduler {args.sched}')
-=======
     elif args.sched == 'poly':
         lr_scheduler = PolyLRScheduler(
             optimizer,
@@ -109,6 +105,7 @@ def create_scheduler(args, optimizer):
             **noise_args,
         )
         num_epochs = lr_scheduler.get_cycle_length() + args.cooldown_epochs
->>>>>>> b5bf4dce98a09cb25a274f360c08f23998faedb8
+    else:
+        raise ValueError(f'Unknown scheduler {args.sched}')
 
     return lr_scheduler, num_epochs
