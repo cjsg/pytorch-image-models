@@ -1,0 +1,5 @@
+{
+    "gr_experiment": ["2021-08-24-mr-tiny-av0", "2021-08-24-mr-tiny-av0001", "2021-08-24-mr-tiny-av0003", "2021-08-24-mr-tiny-av001", "2021-08-24-mr-tiny-av003", "2021-08-24-mr-tiny-av01"],
+    "gr_attack-size": [0, 0.001, 0.003, 0.01, 0.03, 0.1],
+    "attack": ["fgm"]
+}

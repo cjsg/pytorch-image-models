@@ -1,0 +1,9 @@
+{
+    "checkpoint": ["output/train/2021-10-05-mr-topdown-av0/last.pth.tar", "output/train/2021-10-05-mr-topdown-av0001/last.pth.tar", "output/train/2021-10-05-mr-topdown-av0003/last.pth.tar", "output/train/2021-10-05-mr-topdown-av001/last.pth.tar", "output/train/2021-10-05-mr-topdown-av003/last.pth.tar", "output/train/2021-10-05-mr-topdown-av01/last.pth.tar"],
+    "dataset": ["cifar10"],
+    "model": ["mr_topdown_tiny"],
+    "batch-size": [256],
+    "num-gpu": [8],
+    "attacks": ["fgm"],
+    "attack-sizes": ["0. .001 .0018 .0032 .0056 .01 .018 .032 .056 .1 .17 .32 .56"]
+}
