@@ -1,4 +1,5 @@
 # PyTorch Image Models
+- [CJ's Intro](#cjs-intro)
 - [Sponsors](#sponsors)
 - [What's New](#whats-new)
 - [Introduction](#introduction)
@@ -10,6 +11,12 @@
 - [Awesome PyTorch Resources](#awesome-pytorch-resources)
 - [Licenses](#licenses)
 - [Citing](#citing)
+
+## CJ's Intro
+
+This branch / repo is Ross Wightman's timm repo with non-official modifications and additions by Carl-Johann Simon-Gabriel.
+In particular, all parts specific to adversarial training and topdown / multiresolution architectures were coded by Carl-Johann Simon-Gabriel, as well as some modifications for better start-and-resume training process.
+Feel free to re-use as you see fit, while respecting the Apache 2.0 license and Section [Licenses](#licenses).
 
 ## Sponsors
 
