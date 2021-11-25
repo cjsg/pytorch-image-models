@@ -11,3 +11,4 @@ from .model import unwrap_model, get_state_dict
 from .model_ema import ModelEma, ModelEmaV2
 from .random import random_seed
 from .summary import update_summary, get_outdir
+from .resubmit import check_restart
