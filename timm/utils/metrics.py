@@ -6,6 +6,32 @@ Hacked together by / Copyright 2020 Ross Wightman
 
 class AverageMeter:
     """Computes and stores the average and current value"""
+    def __init__(self, lam=.85):
+        """
+        lam (float): update of exponentival moving average (EMA) as
+                     ema = v * (1-lam) + ema * lam; Default: .85
+        """
+        self.reset()
+        self.lam = lam
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+        self.ema = 0
+
+    def update(self, val, n=1):
+        lam = 0. if self.count == 0 else self.lam
+        self.ema = val * (1. - lam) + self.ema * lam
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+class AverageMeterOld:
+    """Computes and stores the average and current value"""
     def __init__(self):
         self.reset()
 
