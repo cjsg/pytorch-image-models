@@ -1,5 +1,8 @@
-# TODO: change back to multiresolution_prev.py
-"""
+"""Multiresolution architecture
+
+Written by Carl-Johann Simon-Gabriel in 2021.
+Based on timm's nest.py code written by Alexander Soare, and under Apache 2.0 license.
+
 TODO: verify that my global init functions doesn't change init of PoolingLayers
 TODO: think whether drop-path on trnsformer layers should include pooling-layers too. (Currently yes.)
 TODO: think about positional encodings:
