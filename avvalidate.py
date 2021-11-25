@@ -195,7 +195,7 @@ def validate(args, attack=None):
         '`attack_size` refers to img-size 32 for cifar and 224 for imgnet.')
     if 'cifar' in args.data.lower():
         data_config['input_size'] = (32, 32, 3) if args.channels_last else (3, 32, 32)
-    elif 'imagenet' in args.data.lower():
+    elif 'imagenet' in args.data.lower() or 'imgnet' in args.data.lower():
         data_config['input_size'] = (224, 224, 3) if args.channels_last else (3, 224, 224)
     else:
         raise NotImplementedError(f'Unknown default input_size for dataset {args.data}')
@@ -304,7 +304,7 @@ def validate(args, attack=None):
         if batch_idx % args.log_interval == 0:
             rate_avg=input.size(0) / batch_time.avg
             log_str = f'[{batch_idx:>4d}/{len(loader)}]  '\
-                      f'{batch_time.val:.3f}s ({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
+                      f'{batch_time.val:>6.3f}s ({batch_time.avg:>6.3f}s, {rate_avg:>7.2f}/s)  '
             acc_str = '  '.join([
                 f'{acc_val:>7.3f} ({acc_avg:>7.3f})' for (acc_val, acc_avg) in zip(accs.val, accs.avg)])
             if batch_idx == 0:  # print column titles
