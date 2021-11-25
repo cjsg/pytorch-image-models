@@ -1,3 +1,9 @@
+scripts/
+yamls/
+sweeps/
+old_or_unused/
+output/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
