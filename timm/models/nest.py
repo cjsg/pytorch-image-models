@@ -64,6 +64,7 @@ default_cfgs = {
     'jx_nest_tiny_cifar_sharekv': _cfg_cifar(),
     'nest_base': _cfg(),
     'nest_small': _cfg(),
+    'nest_mini': _cfg(),
     'nest_tiny': _cfg(),
     'jx_nest_base': _cfg(
         url='https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-vt3p-weights/jx_nest_base-8bc41011.pth'),
@@ -186,7 +187,10 @@ class ConvPool(nn.Module):
             self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
         else:
             self.norm = None
-            self.pool = nn.MaxPool2d(kernel_size=4, stride=2, padding=1)
+            self.pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # BEWARE: previous version used kernel_size=4
+            # self.pool = nn.Sequential(
+            #     nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
+            #     nn.MaxPool2d(kernel_size=2, stride=2, padding=0))
 
     def forward(self, x):
         """
@@ -315,7 +319,8 @@ class Nest(nn.Module):
 
         Notes:
             - Default values follow NesT-B from the original Jax code.
-            - `embed_dims`, `num_heads`, `depths` should be ints or tuples with length `num_levels`.
+            - `embed_dims`, `num_heads`, `depths` should be ints or tuples with length
+              `num_levels`, with values going from input to output layes.
             - For those following the paper, Table A1 may have errors!
                 - https://github.com/google-research/nested-transformer/issues/2
         """
@@ -353,7 +358,7 @@ class Nest(nn.Module):
         # Hint: (img_size // patch_size) gives number of patches along edge of image. sqrt(self.num_blocks[0]) is the
         #  number of blocks along edge of image
         self.block_size = int((img_size // patch_size) // math.sqrt(self.num_blocks[0]))
-        
+
         # Patch embedding
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dims[0], flatten=False)
@@ -387,7 +392,7 @@ class Nest(nn.Module):
     def init_weights(self, mode=''):
         assert mode in ('nlhb', '')
         head_bias = -math.log(self.num_classes) if 'nlhb' in mode else 0.
-        for level in self.levels:
+        for level in self.levels:  # BEWARE: no init in a previous version
             if hasattr(level, 'pos_embed'):
                 trunc_normal_(level.pos_embed, std=.02, a=-2, b=2)
         named_apply(partial(_init_nest_weights, head_bias=head_bias), self)
@@ -552,6 +557,21 @@ def nest_small(pretrained=False, **kwargs):
     model = _create_nest('nest_small', pretrained=pretrained, **model_kwargs)
     return model
 
+@register_model
+def nest_mini(pretrained=False, **kwargs):
+    """ Nest-T @ 224x224
+    """
+    model_kwargs = dict(embed_dims=192, num_heads=4, depths=2, **kwargs)
+    model = _create_nest('nest_mini', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def nest_mini_modified(pretrained=False, **kwargs):
+    """ Nest-T @ 224x224
+    """
+    model_kwargs = dict(embed_dims=192, num_heads=4, depths=2, **kwargs)
+    model = _create_nest('nest_mini', pretrained=pretrained, original=False, **model_kwargs)
+    return model
 
 @register_model
 def nest_tiny(pretrained=False, **kwargs):
@@ -559,6 +579,14 @@ def nest_tiny(pretrained=False, **kwargs):
     """
     model_kwargs = dict(embed_dims=(96, 192, 384), num_heads=(3, 6, 12), depths=(2, 2, 8), **kwargs)
     model = _create_nest('nest_tiny', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def nest_tiny_modified(pretrained=False, **kwargs):
+    """ Nest-T @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(96, 192, 384), num_heads=(3, 6, 12), depths=(2, 2, 8), **kwargs)
+    model = _create_nest('nest_tiny', pretrained=pretrained, original=False, **model_kwargs)
     return model
 
 
