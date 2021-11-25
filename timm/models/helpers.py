@@ -59,6 +59,7 @@ def load_checkpoint(model, checkpoint_path, use_ema=False, strict=True):
 
 def resume_checkpoint(model, checkpoint_path, optimizer=None, loss_scaler=None, log_info=True):
     resume_epoch = None
+    checkpoint_files = None
     if os.path.isfile(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model = model.model if getattr(model, 'is_model_wrapper', False) else model
@@ -85,6 +86,8 @@ def resume_checkpoint(model, checkpoint_path, optimizer=None, loss_scaler=None, 
                 resume_epoch = checkpoint['epoch']
                 if 'version' in checkpoint and checkpoint['version'] > 1:
                     resume_epoch += 1  # start at the next epoch, old checkpoints incremented before save
+            if 'checkpoint_files' in checkpoint:
+                checkpoint_files = checkpoint['checkpoint_files']
 
             if log_info:
                 _logger.info("Loaded checkpoint '{}' (epoch {})".format(checkpoint_path, checkpoint['epoch']))
@@ -92,7 +95,7 @@ def resume_checkpoint(model, checkpoint_path, optimizer=None, loss_scaler=None, 
             model.load_state_dict(checkpoint)
             if log_info:
                 _logger.info("Loaded checkpoint '{}'".format(checkpoint_path))
-        return resume_epoch
+        return resume_epoch, checkpoint_files
     else:
         _logger.error("No checkpoint found at '{}'".format(checkpoint_path))
         raise FileNotFoundError()

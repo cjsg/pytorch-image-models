@@ -32,7 +32,11 @@ class CheckpointSaver:
             recovery_dir='',
             decreasing=False,
             max_history=10,
-            unwrap_fn=unwrap_model):
+            unwrap_fn=unwrap_model,
+            checkpoint_files=None):
+        """
+        checkpoint_files: list of (filename, metric, epoch) tuples in order of decreasing betterness 
+        """
 
         if getattr(model, 'is_model_wrapper', False):
             model = model.model
@@ -45,11 +49,16 @@ class CheckpointSaver:
         self.amp_scaler = amp_scaler
 
         # state
-        self.checkpoint_files = []  # (filename, metric) tuples in order of decreasing betterness
-        self.best_epoch = None
-        self.best_metric = None
         self.curr_recovery_file = ''
         self.last_recovery_file = ''
+        if checkpoint_files:  # (filename, metric, epoch) tuples in order of decreasing betterness
+            self.checkpoint_files = checkpoint_files
+            self.best_epoch = checkpoint_files[0][2]
+            self.best_metric = checkpoint_files[0][1]
+        else:
+            self.checkpoint_files = []
+            self.best_epoch = None
+            self.best_metric = None
 
         # config
         self.checkpoint_dir = checkpoint_dir
@@ -65,29 +74,23 @@ class CheckpointSaver:
 
     def save_checkpoint(self, epoch, metric=None):
         assert epoch >= 0
+        filename = '-'.join([self.save_prefix, str(epoch)]) + self.extension
+        save_path = os.path.join(self.checkpoint_dir, filename)
+        self.checkpoint_files.append((save_path, metric, epoch))
+        self.checkpoint_files = sorted(
+            self.checkpoint_files, key=lambda x: x[1],
+            reverse=not self.decreasing)  # sort in descending order if a lower metric is not better
+        to_delete = self.checkpoint_files.pop() if len(self.checkpoint_files) >= self.max_history else None
+
         tmp_save_path = os.path.join(self.checkpoint_dir, 'tmp' + self.extension)
         last_save_path = os.path.join(self.checkpoint_dir, 'last' + self.extension)
         self._save(tmp_save_path, epoch, metric)
         if os.path.exists(last_save_path):
             os.unlink(last_save_path)  # required for Windows support.
         os.rename(tmp_save_path, last_save_path)
-        worst_file = self.checkpoint_files[-1] if self.checkpoint_files else None
-        if (len(self.checkpoint_files) < self.max_history
-                or metric is None or self.cmp(metric, worst_file[1])):
-            if len(self.checkpoint_files) >= self.max_history:
-                self._cleanup_checkpoints(1)
-            filename = '-'.join([self.save_prefix, str(epoch)]) + self.extension
-            save_path = os.path.join(self.checkpoint_dir, filename)
+        if to_delete is None or save_path != to_delete[0]:
+            self._delete_checkpoint(to_delete)
             os.link(last_save_path, save_path)
-            self.checkpoint_files.append((save_path, metric))
-            self.checkpoint_files = sorted(
-                self.checkpoint_files, key=lambda x: x[1],
-                reverse=not self.decreasing)  # sort in descending order if a lower metric is not better
-
-            checkpoints_str = "Current checkpoints:\n"
-            for c in self.checkpoint_files:
-                checkpoints_str += ' {}\n'.format(c)
-            _logger.info(checkpoints_str)
 
             if metric is not None and (self.best_metric is None or self.cmp(metric, self.best_metric)):
                 self.best_epoch = epoch
@@ -96,6 +99,11 @@ class CheckpointSaver:
                 if os.path.exists(best_save_path):
                     os.unlink(best_save_path)
                 os.link(last_save_path, best_save_path)
+
+            checkpoints_str = "Current checkpoints:\n"
+            for c in self.checkpoint_files:
+                checkpoints_str += ' {}\n'.format(c[:2])
+            _logger.info(checkpoints_str)
 
         return (None, None) if self.best_metric is None else (self.best_metric, self.best_epoch)
 
@@ -106,6 +114,7 @@ class CheckpointSaver:
             'state_dict': get_state_dict(self.model, self.unwrap_fn),
             'optimizer': self.optimizer.state_dict(),
             'version': 2,  # version < 2 increments epoch before save
+            'checkpoint_files': self.checkpoint_files,
         }
         if self.args is not None:
             save_state['arch'] = self.args.model
@@ -118,19 +127,13 @@ class CheckpointSaver:
             save_state['metric'] = metric
         torch.save(save_state, save_path)
 
-    def _cleanup_checkpoints(self, trim=0):
-        trim = min(len(self.checkpoint_files), trim)
-        delete_index = self.max_history - trim
-        if delete_index < 0 or len(self.checkpoint_files) <= delete_index:
-            return
-        to_delete = self.checkpoint_files[delete_index:]
-        for d in to_delete:
+    def _delete_checkpoint(self, checkpoint_file):
+        if checkpoint_file is not None:
             try:
-                _logger.debug("Cleaning checkpoint: {}".format(d))
-                os.remove(d[0])
+                _logger.debug("Cleaning checkpoint: {}".format(checkpoint_file[:2]))
+                os.remove(checkpoint_file[0])
             except Exception as e:
-                _logger.error("Exception '{}' while deleting checkpoint".format(e))
-        self.checkpoint_files = self.checkpoint_files[:delete_index]
+                _logger.error("Exception '{}' while deleting checkpoint".format(checkpoint_file))
 
     def save_recovery(self, epoch, batch_idx=0):
         assert epoch >= 0
