@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-""" ImageNet Training Script
+""" Adversarial Training Script
 
-This is intended to be a lean and easily modifiable ImageNet training script that reproduces ImageNet
-training results with some of the latest networks and training techniques. It favours canonical PyTorch
-and standard Python style over trying to be able to 'do it all.' That said, it offers quite a few speed
-and training result improvements over the usual PyTorch example scripts. Repurpose as you see fit.
+This is a training script for adversarial training on ImageNet and CIFAR-10. It is heavily based on Ross
+Wightman's timm/ package and ImageNet Training Script, which stands under an Apache 2.0 license (see
+https://github.com/rwightman) and was modified by Carl-Johann Simon-Gabriel.
 
 This script was started from an early version of the PyTorch ImageNet example
 (https://github.com/pytorch/examples/tree/master/imagenet)
@@ -12,7 +11,9 @@ This script was started from an early version of the PyTorch ImageNet example
 NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 (https://github.com/NVIDIA/apex/tree/master/examples/imagenet)
 
-Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
+Script based on timm's train.py script from Ross Wightman (https://github.com/rwightman).
+
+Modified by Carl-Johann Simon-Gabriel.
 """
 import argparse
 import time

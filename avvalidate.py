@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-""" ImageNet Validation Script
+""" Adversarial Validation Script
 
-This is intended to be a lean and easily modifiable ImageNet validation script for evaluating pretrained
-models or training checkpoints against ImageNet or similarly organized image datasets. It prioritizes
+This is intended for adversarial validation on ImageNet and CIFAR-10 of pretrained networks.  It prioritizes
 canonical PyTorch, standard Python style, and good performance. Repurpose as you see fit.
 
-Hacked together by Ross Wightman (https://github.com/rwightman)
+Heavily based on timm's validation.py script from Ross Wightman's timm package (https://github.com/rwightman),
+which stands under Apache 2.0 license.
+
+Modified by Carl-Johann Simon-Gabriel.
 """
 import argparse
 import os
