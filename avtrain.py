@@ -32,7 +32,8 @@ from timm.data import create_dataset, create_loader, resolve_data_config, Mixup,
 from timm.models import create_model, safe_model_name, resume_checkpoint, load_checkpoint,\
     convert_splitbn_model, model_parameters, NormalizationWrapper
 from timm.utils import *
-from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
+# from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
+from timm.loss import *
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
@@ -75,7 +76,7 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # Dataset / Model parameters
 parser.add_argument('data_dir', metavar='DIR',
                     help='path to dataset. '
-                         'If path contains `lmdb`, then LMDBIterDataset/Loader is used.')
+                         'If path contains `lmdb`, then LMDB(Iter)Dataset/Loader is used.')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='',
                     help='dataset type (default: ImageFolder/ImageTar if empty). '
                          'If path contains `lmdb`, then LMDBIterDataset/Loader')
@@ -83,16 +84,20 @@ parser.add_argument('--train-split', metavar='NAME', default='train',
                     help='dataset train split (default: train)')
 parser.add_argument('--val-split', metavar='NAME', default='validation',
                     help='dataset validation split (default: validation)')
-parser.add_argument('--model', default='resnet101', type=str, metavar='MODEL',
-                    help='Name of model to train (default: "countception"')
+parser.add_argument('--model', default='resnet50', type=str, metavar='MODEL',
+                    help='Name of model to train (default: "resnet50"')
 parser.add_argument('--pretrained', action='store_true', default=False,
                     help='Start with pretrained version of specified network (if avail)')
 parser.add_argument('--initial-checkpoint', default='', type=str, metavar='PATH',
                     help='Initialize model from this checkpoint (default: none)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='Resume full model and optimizer state from checkpoint (default: none)')
+                    help='Resume full model and optimizer state from checkpoint (default: None). ')
 parser.add_argument('--no-resume-opt', action='store_true', default=False,
                     help='prevent resume of optimizer state when resuming model')
+parser.add_argument('--start-or-resume', action='store_true', default=False,
+                    help='Resume from `last.pth.tar` file in `--experiment` if it exists. '
+                    'Otherwise, launch a new experiment. `--experiment` must be provided and '
+                    '`--resume` cannot be used')
 parser.add_argument('--num-classes', type=int, default=None, metavar='N',
                     help='number of label classes (Model default if None)')
 parser.add_argument('--gp', default=None, type=str, metavar='POOL',
@@ -110,12 +115,15 @@ parser.add_argument('--std', type=float, nargs='+', default=None, metavar='STD',
 parser.add_argument('--interpolation', default='', type=str, metavar='NAME',
                     help='Image resize interpolation type (for validation only; overrides model). '
                     'For train, use train-interpolation')
-parser.add_argument('-b', '--batch-size', type=int, default=32, metavar='N',
-                    help='input batch size for training (default: 32)')
-parser.add_argument('-vb', '--validation-batch-size-multiplier', type=int, default=1, metavar='N',
-                    help='ratio of validation batch size to training batch size (default: 1)')
+parser.add_argument('-b', '--batch-size', type=int, default=128, metavar='N',
+                    help='input batch size for training (default: 128)')
+parser.add_argument('-vb', '--validation-batch-size', type=int, default=None, metavar='N',
+                    help='validation batch size override (default: None)')
 parser.add_argument('--buffer-size', type=int, default=None, metavar='B',
-                    help='buffer size when using iterable lmdb-dataset')
+                    help='buffer size when using iterable lmdb-dataset. If buffer-size is None (default) and '
+                    '`map-style-lmdb` is False, then the LMDB dataset is loaded in sequential order.')
+parser.add_argument('--map-style-lmdb', action='store_true', default=False,
+                    help='Use map style lmdb (LMDBDataset) instead of iterative style (LMDBIterDataset). Requires an LMDB-dataset.')
 
 # Optimizer parameters
 parser.add_argument('--opt', default='sgd', type=str, metavar='OPTIMIZER',
@@ -126,8 +134,8 @@ parser.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar=
                     help='Optimizer Betas (default: None, use opt default)')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='Optimizer momentum (default: 0.9)')
-parser.add_argument('--weight-decay', type=float, default=0.0001,
-                    help='weight decay (default: 0.0001)')
+parser.add_argument('--weight-decay', type=float, default=2e-5,
+                    help='weight decay (default: 2e-5)')
 parser.add_argument('--clip-grad', type=float, default=None, metavar='NORM',
                     help='Clip gradient norm (default: None, no clipping)')
 parser.add_argument('--clip-mode', type=str, default='norm',
@@ -135,31 +143,37 @@ parser.add_argument('--clip-mode', type=str, default='norm',
 
 
 # Learning rate schedule parameters
-parser.add_argument('--sched', default='step', type=str, metavar='SCHEDULER',
+parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
                     help='LR scheduler (default: "step"')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                    help='learning rate (default: 0.01)')
-parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct',
-                    help='learning rate noise on/off epoch percentages')
+parser.add_argument('--lr', type=float, default=0.05, metavar='LR',
+                    help='learning rate (default: 0.05)')
+parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct1, pct2',
+                    help='learning rate noise on/off epoch percentages. '
+                         'Noise is applied between pct1*epochs and pct2*epochs. '
+                         'If only pct1 is given, noise is applied btw pct1*epochs (or pct1?) and epochs')
 parser.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT',
                     help='learning rate noise limit percent (default: 0.67)')
 parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV',
                     help='learning rate noise std-dev (default: 1.0)')
 parser.add_argument('--lr-cycle-mul', type=float, default=1.0, metavar='MULT',
                     help='learning rate cycle len multiplier (default: 1.0)')
+parser.add_argument('--lr-cycle-decay', type=float, default=0.5, metavar='MULT',
+                    help='amount to decay each learning rate cycle (default: 0.5)')
 parser.add_argument('--lr-cycle-limit', type=int, default=1, metavar='N',
-                    help='learning rate cycle limit')
+                    help='learning rate cycle limit, cycles enabled if > 1')
+parser.add_argument('--lr-k-decay', type=float, default=1.0,
+                    help='learning rate k-decay for cosine/poly (default: 1.0)')
 parser.add_argument('--warmup-lr', type=float, default=0.0001, metavar='LR',
                     help='warmup learning rate (default: 0.0001)')
-parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
+parser.add_argument('--min-lr', type=float, default=1e-6, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-parser.add_argument('--epochs', type=int, default=200, metavar='N',
-                    help='number of epochs to train (default: 2)')
+parser.add_argument('--epochs', type=int, default=300, metavar='N',
+                    help='number of epochs to train (default: 300)')
 parser.add_argument('--epoch-repeats', type=float, default=0., metavar='N',
                     help='epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).')
 parser.add_argument('--start-epoch', default=None, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--decay-epochs', type=float, default=30, metavar='N',
+parser.add_argument('--decay-epochs', type=float, default=100, metavar='N',
                     help='epoch interval to decay LR')
 parser.add_argument('--warmup-epochs', type=int, default=3, metavar='N',
                     help='epochs to warmup LR, if scheduler supports')
@@ -185,14 +199,19 @@ parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT',
                     help='Color jitter factor (default: 0.4)')
 parser.add_argument('--aa', type=str, default=None, metavar='NAME',
                     help='Use AutoAugment policy. "v0" or "original". (default: None)'),
+parser.add_argument('--aug-repeats', type=int, default=0,
+                    help='Number of augmentation repetitions (distributed training only) (default: 0)')
 parser.add_argument('--aug-splits', type=int, default=0,
-                    help='Number of augmentation splits (default: 0, valid: 0 or >=2)')
-parser.add_argument('--jsd', action='store_true', default=False,
+                    help='Number of augmentation splits (default: 0, valid: 0 or >=2) '
+                    'If aug-splits >= 2, consider using --jsd-loss')
+parser.add_argument('--jsd-loss', action='store_true', default=False,
                     help='Enable Jensen-Shannon Divergence + CE loss. Use with `--aug-splits`.')
+parser.add_argument('--bce-loss', action='store_true', default=False,
+                    help='Enable BCE loss w/ Mixup/CutMix use.')
 parser.add_argument('--reprob', type=float, default=0., metavar='PCT',
                     help='Random erase prob (default: 0.)')
-parser.add_argument('--remode', type=str, default='const',
-                    help='Random erase mode (default: "const")')
+parser.add_argument('--remode', type=str, default='pixel',
+                    help='Random erase mode (default: "pixel")')
 parser.add_argument('--recount', type=int, default=1,
                     help='Random erase count (default: 1)')
 parser.add_argument('--resplit', action='store_true', default=False,
@@ -233,7 +252,7 @@ parser.add_argument('--bn-eps', type=float, default=None,
                     help='BatchNorm epsilon override (if not None)')
 parser.add_argument('--sync-bn', action='store_true',
                     help='Enable NVIDIA Apex or Torch synchronized BatchNorm.')
-parser.add_argument('--dist-bn', type=str, default='',
+parser.add_argument('--dist-bn', type=str, default='reduce',
                     help='Distribute BatchNorm stats between nodes after each epoch ("broadcast", "reduce", or "")')
 parser.add_argument('--split-bn', action='store_true',
                     help='Enable separate BN layers per augmentation split.')
@@ -267,7 +286,7 @@ parser.add_argument('--recovery-interval', type=int, default=0, metavar='N',
 parser.add_argument('--checkpoint-hist', type=int, default=10, metavar='N',
                     help='number of checkpoints to keep (default: 10)')
 parser.add_argument('-j', '--workers', type=int, default=4, metavar='N',
-                    help='how many training processes to use (default: 1)')
+                    help='how many training processes to use (default: 4)')
 parser.add_argument('--save-images', action='store_true', default=False,
                     help='save images of input bathes every log interval for debugging')
 parser.add_argument('--amp', action='store_true', default=False,
@@ -311,6 +330,18 @@ def _parse_args():
     # defaults will have been overridden if config file specified.
     args = parser.parse_args(remaining)
 
+    # If no config provided and start_or_resume, override the defaults using the config
+    # file from the experiment repo and apply all other provided args on top
+    if args.start_or_resume and not args_config.config:
+        assert args.experiment, "`--experiment` must be provided when using `--start-or-resume`"
+        output_dir = get_outdir(args.output if args.output else './output/train', args.experiment)
+        config_file = os.path.join(output_dir, 'args.yaml')
+        if os.path.isfile(config_file):
+            with open(config_file, 'r') as f:  # override defaults
+                cfg = yaml.safe_load(f)
+                parser.set_defaults(**cfg)
+            args = parser.parse_args(remaining) # re-apply main args on top
+
     # Cache the args as a text string to save them in the output dir later
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     return args, args_text
@@ -319,7 +350,7 @@ def _parse_args():
 def main():
     setup_default_logging()
     args, args_text = _parse_args()
-    
+
     if args.log_wandb:
         if has_wandb:
             wandb.init(project=args.experiment, config=args)
@@ -379,7 +410,6 @@ def main():
 
     random_seed(args.seed, args.rank)
 
-
     model = create_model(
         args.model,
         pretrained=args.pretrained,
@@ -399,6 +429,7 @@ def main():
         args.num_classes = model.num_classes  # FIXME handle model default vs config num_classes more elegantly
 
     if args.local_rank == 0:
+        # print(model)
         _logger.info(
             f'Model {safe_model_name(args.model)} created, param count:{sum([m.numel() for m in model.parameters()])}')
 
@@ -437,7 +468,7 @@ def main():
     # setup synchronized BatchNorm for distributed training
     if args.distributed and args.sync_bn:
         assert not args.split_bn
-        if has_apex and use_amp != 'native':
+        if has_apex and use_amp == 'apex':
             # Apex SyncBN preferred unless native amp is activated
             model = convert_syncbn_model(model)
         else:
@@ -472,13 +503,25 @@ def main():
             _logger.info('AMP not enabled. Training in float32.')
 
     # optionally resume from a checkpoint
+    if args.start_or_resume:
+        assert not args.resume, "`--resume` cannot be used when using `--start-or-resume`"
+        output_dir = get_outdir(args.output if args.output else './output/train', args.experiment)
+        resume_path = os.path.join(output_dir, 'last.pth.tar')
+        if os.path.exists(resume_path):
+            args.resume = resume_path
     resume_epoch = None
-    if args.resume:
-        resume_epoch = resume_checkpoint(
+    checkpoint_files = None
+    best_metric = None
+    best_epoch = None
+    if args.resume:  # TODO: what if we want to resume w/o checkpoint files or with another metric?
+        resume_epoch, checkpoint_files = resume_checkpoint(
             model, args.resume,
             optimizer=None if args.no_resume_opt else optimizer,
             loss_scaler=None if args.no_resume_opt else loss_scaler,
             log_info=args.local_rank == 0)
+        if checkpoint_files and len(checkpoint_files[0]) > 2:
+            best_metric = checkpoint_files[0][1]
+            best_epoch = checkpoint_files[0][2]
 
     # setup exponential moving average of model weights, SWA could be used here too
     model_ema = None
@@ -491,7 +534,7 @@ def main():
 
     # setup distributed training
     if args.distributed:
-        if has_apex and use_amp != 'native':
+        if has_apex and use_amp == 'apex':
             # Apex DDP preferred unless native amp is activated
             if args.local_rank == 0:
                 _logger.info("Using NVIDIA APEX DistributedDataParallel.")
@@ -517,18 +560,20 @@ def main():
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
     # create the train and eval datasets
-    _logger.info('Creating datasets...')
+    # _logger.info('Creating datasets...')
     start = datetime.now()
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir, split=args.train_split, is_training=True,
         batch_size=args.batch_size, repeats=args.epoch_repeats,
-        distributed=args.distributed)
+        distributed=args.distributed, map_style_lmdb=args.map_style_lmdb,
+        log_info=args.local_rank == 0)
     dataset_eval = create_dataset(
-        args.dataset, root=args.data_dir, split=args.val_split, is_training=False, batch_size=args.batch_size)
-    _logger.info(f'Done in {datetime.now()-start} seconds')
+        args.dataset, root=args.data_dir, split=args.val_split, is_training=False,
+        batch_size=args.batch_size, distributed=args.distributed,
+        map_style_lmdb=args.map_style_lmdb, log_info=args.local_rank == 0)
+    # _logger.info(f'Done in {datetime.now()-start} seconds')
 
-    end = datetime.now()
     # setup mixup / cutmix
     collate_fn = None
     mixup_fn = None
@@ -569,6 +614,7 @@ def main():
         vflip=args.vflip,
         color_jitter=args.color_jitter,
         auto_augment=args.aa,
+        num_aug_repeats=args.aug_repeats,
         num_aug_splits=num_aug_splits,
         interpolation=train_interpolation,
         mean=data_config['mean'],
@@ -578,13 +624,13 @@ def main():
         collate_fn=collate_fn,
         pin_memory=args.pin_mem,
         use_multi_epochs_loader=args.use_multi_epochs_loader,
-        buffer_size=args.buffer_size
+        buffer_size=args.buffer_size,
     )
 
     loader_eval = create_loader(
         dataset_eval,
         input_size=data_config['input_size'],
-        batch_size=args.validation_batch_size_multiplier * args.batch_size,
+        batch_size=args.validation_batch_size or args.batch_size,
         is_training=False,
         use_prefetcher=args.prefetcher,
         interpolation=data_config['interpolation'],
@@ -614,22 +660,27 @@ def main():
         fmodel = fb.PyTorchModel(model, bounds=(0., 1.), device=current_device)
 
     # setup loss function
-    if args.jsd:
+    if args.jsd_loss:
         assert num_aug_splits > 1  # JSD only valid with aug splits set
-        train_loss_fn = JsdCrossEntropy(num_splits=num_aug_splits, smoothing=args.smoothing).to(current_device)
+        train_loss_fn = JsdCrossEntropy(num_splits=num_aug_splits, smoothing=args.smoothing)
     elif mixup_active:
-        # smoothing is handled with mixup target transform
-        train_loss_fn = SoftTargetCrossEntropy().to(current_device)
+        # smoothing is handled with mixup target transform which outputs sparse, soft targets
+        if args.bce_loss:
+            train_loss_fn = nn.BCEWithLogitsLoss()
+        else:
+            train_loss_fn = SoftTargetCrossEntropy()
     elif args.smoothing:
-        train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.smoothing).to(current_device)
+        if args.bce_loss:
+            train_loss_fn = DenseBinaryCrossEntropy(smoothing=args.smoothing)
+        else:
+            train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
     else:
-        train_loss_fn = nn.CrossEntropyLoss().to(current_device)
+        train_loss_fn = nn.CrossEntropyLoss()
+    train_loss_fn = train_loss_fn.cuda().to(current_device)
     validate_loss_fn = nn.CrossEntropyLoss().to(current_device)
 
     # setup checkpoint saver and eval metric tracking
-    eval_metric = args.eval_metric
-    best_metric = None
-    best_epoch = None
+    eval_metric = args.eval_metric  # TODO: what happens if metric changes after resume?
     saver = None
     output_dir = None
     if args.rank == 0:
@@ -645,10 +696,12 @@ def main():
         decreasing = True if eval_metric == 'loss' else False
         saver = CheckpointSaver(
             model=model, optimizer=optimizer, args=args, model_ema=model_ema, amp_scaler=loss_scaler,
-            checkpoint_dir=output_dir, recovery_dir=output_dir, decreasing=decreasing, max_history=args.checkpoint_hist)
+            checkpoint_dir=output_dir, recovery_dir=output_dir, decreasing=decreasing,
+            max_history=args.checkpoint_hist, checkpoint_files=checkpoint_files)
         with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
             f.write(args_text)
 
+    exit_status = 0
     try:
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
@@ -665,7 +718,8 @@ def main():
                 distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
 
             eval_metrics = validate(
-                model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast, attack=attack, fmodel=fmodel)
+                model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast,
+                attack=attack, fmodel=fmodel, output_dir=output_dir)
 
             if model_ema is not None and not args.model_ema_force_cpu:
                 if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
@@ -688,10 +742,17 @@ def main():
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
 
+            if args.start_or_resume and check_restart():
+                _logger.warning(f'Restarted after epoch {epoch}')
+                # exit_status = 3
+                break
+
     except KeyboardInterrupt:
         pass
     if best_metric is not None:
         _logger.info('*** Best metric: {0} (epoch {1})'.format(best_metric, best_epoch))
+    exit(3)
+    # exit(exit_status)
 
 
 def train_one_epoch(
@@ -718,6 +779,7 @@ def train_one_epoch(
     last_idx = len(loader) - 1
     num_updates = epoch * len(loader)
     for batch_idx, (input, target) in enumerate(loader):
+        # print(batch_idx, target.cpu())
         last_batch = batch_idx == last_idx
         data_time_m.update(time.time() - end)
         if not args.prefetcher:
@@ -773,19 +835,20 @@ def train_one_epoch(
                 losses_m.update(reduced_loss.item(), input.size(0))
 
             if args.local_rank == 0:
+                # _logger.info(f'batch_size = {input.size(0)}')
                 _logger.info(
                     'Train: {} [{:>4d}/{} ({:>3.0f}%)]  '
-                    'Loss: {loss.val:>9.6f} ({loss.avg:>6.4f})  '
-                    'Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  '
+                    'Loss: {loss.ema:>9.6f} ({loss.avg:>6.4f})  '
+                    'Time: {batch_time.ema:.3f}s, {rate:>7.2f}/s  '
                     '({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
                     'LR: {lr:.3e}  '
-                    'Data: {data_time.val:.3f} ({data_time.avg:.3f})'.format(
+                    'Data: {data_time.ema:.3f} ({data_time.avg:.3f})'.format(
                         epoch,
-                        batch_idx, len(loader),
+                        batch_idx+1, len(loader),
                         100. * batch_idx / last_idx,
                         loss=losses_m,
                         batch_time=batch_time_m,
-                        rate=input.size(0) * args.world_size / batch_time_m.val,
+                        rate=input.size(0) * args.world_size / batch_time_m.ema,
                         rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
                         lr=lr,
                         data_time=data_time_m))
@@ -813,7 +876,9 @@ def train_one_epoch(
     return OrderedDict([('loss', losses_m.avg)])
 
 
-def validate(model, loader, loss_fn, args, amp_autocast=suppress, attack=None, fmodel=None, log_suffix=''):
+def validate(
+        model, loader, loss_fn, args, amp_autocast=suppress, attack=None, 
+        fmodel=None, log_suffix='', output_dir=None):
     current_device = 'cuda' if torch.cuda.is_available() else 'cpu'
     batch_time_m = AverageMeter()
     losses_m = AverageMeter()
@@ -825,6 +890,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, attack=None, f
     end = time.time()
     last_idx = len(loader) - 1
     for batch_idx, (input, target) in enumerate(loader):
+        # print(batch_idx, target.cpu())
         last_batch = batch_idx == last_idx
         if not args.prefetcher:
             input = input.to(current_device)
@@ -877,12 +943,19 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, attack=None, f
             log_name = 'Test' + log_suffix
             _logger.info(
                 '{0}: [{1:>4d}/{2}]  '
-                'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  '
-                'Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  '
-                'Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  '
-                'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
-                    log_name, batch_idx, last_idx, batch_time=batch_time_m,
+                'Time: {batch_time.ema:.3f} ({batch_time.avg:.3f})  '
+                'Loss: {loss.ema:>7.4f} ({loss.avg:>6.4f})  '
+                'Acc@1: {top1.ema:>7.4f} ({top1.avg:>7.4f})  '
+                'Acc@5: {top5.ema:>7.4f} ({top5.avg:>7.4f})'.format(
+                    log_name, batch_idx+1, len(loader), batch_time=batch_time_m,
                     loss=losses_m, top1=top1_m, top5=top5_m))
+
+            if args.save_images and output_dir:
+                torchvision.utils.save_image(
+                    input,
+                    os.path.join(output_dir, 'test-batch-%d.jpg' % batch_idx),
+                    padding=0,
+                    normalize=True)
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
 
